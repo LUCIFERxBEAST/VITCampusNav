@@ -131,7 +131,9 @@ button, select {
 }
 
 [type=reset], [type=submit], button, html [type=button] {
-    -webkit-appearance: button
+    appearance: button;
+    -webkit-appearance: button;
+    -moz-appearance: button;
 }
 
 [type=button]::-moz-focus-inner, [type=reset]::-moz-focus-inner, [type=submit]::-moz-focus-inner, button::-moz-focus-inner {
@@ -175,7 +177,9 @@ textarea {
 }
 
 [type=search] {
+    appearance: textfield;
     -webkit-appearance: textfield;
+    -moz-appearance: textfield;
     outline-offset: -2px
 }
 
