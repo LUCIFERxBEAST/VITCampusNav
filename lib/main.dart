@@ -14,6 +14,7 @@ import 'package:latlong2/latlong.dart' as latlong;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Ensure you run 'flutter run' on a device/emulator, as the map relies on real GPS.
   runApp(const VitNavigationApp());
 }
 
@@ -120,6 +121,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   // --- Night Mode State ---
   bool _isNightMode = false;
+
+  // --- OSRM Configuration Constants ---
+  // Use 127.0.0.1 for local Docker access
+  static const String _osrmHost = '127.0.0.1';
+  // Port 6000 used for walk profile due to conflict on 5000
+  static const int _walkPort = 6000;
+  // Port 5001 assumed for bike profile
+  static const int _bikePort = 5001;
 
   final List<Location> _allLocations = const [
     Location(
@@ -529,6 +538,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         );
   }
 
+  // --- MODIFIED: Route Summary Fetch to use Custom OSRM Server ---
   Future<bool> _fetchRouteSummary(
     String profile, {
     bool fireStateUpdate = false,
@@ -551,8 +561,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _currentPosition!.longitude,
     );
     final end = destination;
+
+    // Use the custom OSRM configuration
+    final int port = profile == 'walk' ? _walkPort : _bikePort;
+
     final url = Uri.parse(
-      'http://router.project-osrm.org/route/v1/$profile/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=false&geometries=geojson',
+      'http://$_osrmHost:$port/route/v1/$profile/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=false&geometries=geojson',
     );
 
     try {
@@ -591,6 +605,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return false;
   }
 
+  // --- MODIFIED: Route Details Fetch to use Custom OSRM Server ---
   Future<bool> _fetchRouteDetails(String profile) async {
     final destination = _finalDestinationCoordinates;
     if (_currentPosition == null || destination == null) return false;
@@ -615,8 +630,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _currentPosition!.longitude,
     );
     final end = destination;
+
+    // Use the custom OSRM configuration
+    final int port = profile == 'walk' ? _walkPort : _bikePort;
+
     final url = Uri.parse(
-      'http://router.project-osrm.org/route/v1/$profile/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson&steps=true',
+      'http://$_osrmHost:$port/route/v1/$profile/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson&steps=true',
     );
 
     try {
