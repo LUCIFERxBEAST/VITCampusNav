@@ -1,18 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:cached_network_image/cached_network_image.dart'; // Needed for CachedTileProvider
-import 'package:flutter/gestures.dart'; // ⭐️ Added for kPrimaryButton
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:flutter_map_location_marker/flutter_map_location_marker.dart'; // Needed for CurrentLocationLayer
-import 'package:flutter_tts/flutter_tts.dart'; // Import for TTS
+import 'package:flutter_map_location_marker/flutter_map_location_marker.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart'
-    show LatLng; // Using Google's LatLng for convenience
+import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
 import 'package:http/http.dart' as http;
-import 'package:latlong2/latlong.dart'
-    as latlong; // Use 'as' to avoid conflicts
+import 'package:latlong2/latlong.dart' as latlong;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,7 +22,7 @@ class Location {
   final String name;
   final String category;
   final String description;
-  final LatLng coordinates; // Using Google's LatLng
+  final LatLng coordinates;
 
   const Location({
     required this.name,
@@ -36,9 +34,9 @@ class Location {
 
 // --- Data Model for a Route Step ---
 class RouteStep {
-  final String instruction; // The text to speak
+  final String instruction;
   final double distance;
-  final LatLng location; // Using Google's LatLng
+  final LatLng location;
   final String maneuverType;
   final String maneuverModifier;
 
@@ -86,9 +84,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
 
+  double _sheetPosition = 0.2; // Default initial size
+
+  late final AnimationController _rotationAnimationController;
+
   bool _isFollowingUser = false;
 
-  List<LatLng> _routeCoordinates = [];
+  List<LatLng> _fullRouteCoordinates = [];
+  List<LatLng> _remainingRouteCoordinates = [];
+
   String _selectedProfile = '';
   bool _isRouting = false;
 
@@ -108,6 +112,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _currentStepIndex = 0;
 
   final FlutterTts _flutterTts = FlutterTts();
+
+  // Search controller and results
+  final TextEditingController _searchController = TextEditingController();
+  List<Location> _searchResults = [];
+  bool _isSearchActive = false;
+
+  // --- Night Mode State ---
+  bool _isNightMode = false;
 
   final List<Location> _allLocations = const [
     Location(
@@ -147,6 +159,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   StreamSubscription<Position>? _positionStreamSubscription;
   bool _isLocationServiceEnabled = false;
 
+  // --- Rerouting State ---
+  bool _isRerouting = false;
+  static const double _rerouteThreshold = 30.0; // 30 meters
+
   LatLng? get _finalDestinationCoordinates {
     return _selectedLocation?.coordinates ?? _tappedDestination;
   }
@@ -181,13 +197,95 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     super.initState();
     _initTts();
     _checkAndStartLocationStream();
+
+    _rotationAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+
+    // Listen to search controller
+    _searchController.addListener(_onSearchChanged);
+
+    // Listen to sheet controller
+    _sheetController.addListener(_onSheetMoved);
+  }
+
+  // Corrected listener
+  void _onSheetMoved() {
+    // The 'mounted' check is all we need here.
+    if (mounted) {
+      setState(() {
+        _sheetPosition = _sheetController.size;
+      });
+    }
   }
 
   @override
   void dispose() {
     _positionStreamSubscription?.cancel();
     _flutterTts.stop();
+    _rotationAnimationController.dispose();
+
+    // Dispose search controller
+    _searchController.removeListener(_onSearchChanged);
+    _searchController.dispose();
+
+    // Dispose sheet controller listener
+    _sheetController.removeListener(_onSheetMoved);
+
     super.dispose();
+  }
+
+  // Search logic
+  void _onSearchChanged() {
+    final query = _searchController.text.toLowerCase();
+    if (query.isEmpty) {
+      if (_isSearchActive) {
+        setState(() {
+          _isSearchActive = false;
+          _searchResults = [];
+        });
+      }
+    } else {
+      final results = _allLocations.where((loc) {
+        return loc.name.toLowerCase().contains(query) ||
+            loc.description.toLowerCase().contains(query) ||
+            loc.category.toLowerCase().contains(query);
+      }).toList();
+
+      setState(() {
+        _isSearchActive = true;
+        _searchResults = results;
+      });
+    }
+  }
+
+  // Clear search
+  void _clearSearch() {
+    _searchController.clear();
+    FocusScope.of(context).unfocus(); // Hide keyboard
+    setState(() {
+      _isSearchActive = false;
+      _searchResults = [];
+    });
+  }
+
+  // Handle tapping a search result
+  void _onSearchResultTapped(Location location) {
+    _clearSearch(); // Clears text, sets _isSearchActive=false, attempts unfocus
+
+    // Add direct unfocus attempt
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    _setDestinationFromDirectory(location); // Use existing method
+  }
+
+  // --- Toggle Night Mode ---
+  void _toggleNightMode() {
+    if (!mounted) return;
+    setState(() {
+      _isNightMode = !_isNightMode;
+    });
   }
 
   Future<void> _initTts() async {
@@ -203,6 +301,56 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     await _flutterTts.speak(text);
   }
 
+  // Helper method for smooth rotation
+  void _animateRotationTo(double targetRotation) {
+    final currentRotation = _mapController.camera.rotation;
+    // Normalize rotations to be between -180 and 180 to find shortest path
+    double normalize(double angle) {
+      while (angle <= -180) angle += 360;
+      while (angle > 180) angle -= 360;
+      return angle;
+    }
+
+    final currentNormalized = normalize(currentRotation);
+    final targetNormalized = normalize(targetRotation);
+
+    // Calculate the difference, ensuring it takes the shortest path
+    double diff = targetNormalized - currentNormalized;
+    if (diff > 180) diff -= 360;
+    if (diff < -180) diff += 360;
+
+    final finalRotation =
+        currentRotation + diff; // Target rotation via shortest path
+
+    final tween = Tween<double>(begin: currentRotation, end: finalRotation);
+
+    final animation = tween.animate(
+      CurvedAnimation(
+        parent: _rotationAnimationController,
+        curve: Curves.easeInOut,
+      ),
+    );
+    _rotationAnimationController.stop();
+    // Remove potential old listener before adding new one
+    animation.removeListener(() {}); // No-op remove just in case
+    animation.addListener(() {
+      if (mounted) {
+        _mapController.rotate(animation.value);
+      }
+    });
+
+    // Clean up listener when animation completes or is dismissed
+    animation.addStatusListener((status) {
+      if (status == AnimationStatus.completed ||
+          status == AnimationStatus.dismissed) {
+        animation.removeListener(() {}); // Clean up listener
+      }
+    });
+
+    _rotationAnimationController.reset();
+    _rotationAnimationController.forward();
+  }
+
   Future<void> _checkAndStartLocationStream() async {
     _isLocationServiceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!_isLocationServiceEnabled) return;
@@ -211,92 +359,159 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever)
+          permission == LocationPermission.deniedForever) {
         return;
+      }
     }
 
-    // Check again after requesting
     _isLocationServiceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!_isLocationServiceEnabled || !mounted) return; // Added mounted check
+    if (mounted) {
+      setState(() {}); // Update UI if service became enabled
+    }
 
-    setState(() {}); // Update UI if service became enabled
+    if (!_isLocationServiceEnabled) return;
 
     const locationSettings = LocationSettings(
       accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 5,
+      distanceFilter: 0, // Keep at 0 for frequent updates
     );
 
-    _positionStreamSubscription
-        ?.cancel(); // Cancel previous subscription if any
+    _positionStreamSubscription?.cancel();
     _positionStreamSubscription =
+        // --- MODIFIED: Made the listener async ---
         Geolocator.getPositionStream(locationSettings: locationSettings).listen(
-          (Position position) {
-            if (!mounted) return; // Ensure widget is still mounted
+          (Position position) async {
+            if (!mounted) return;
 
-            final previousPosition = _currentPosition;
             setState(() {
               _currentPosition = position;
             });
 
-            if (_isFollowingUser &&
-                _isRouting &&
-                position.headingAccuracy > 0 &&
-                position.heading != -1.0) {
-              double headingDifference = 0;
-              if (previousPosition != null &&
-                  previousPosition.headingAccuracy > 0 &&
-                  previousPosition.heading != -1.0) {
-                headingDifference = position.heading - previousPosition.heading;
-                if (headingDifference > 180.0) headingDifference -= 360.0;
-                if (headingDifference < -180.0) headingDifference += 360.0;
-              }
+            debugPrint(
+              "New Position: ${position.latitude}, ${position.longitude}, Heading: ${position.heading}",
+            );
 
-              if (previousPosition == null ||
-                  previousPosition.heading == -1.0 ||
-                  headingDifference.abs() > 2.0) {
-                _mapController.rotate(-position.heading);
-              }
-              _mapController.move(
-                _toFlutterMapLatLng(
-                  LatLng(position.latitude, position.longitude),
-                ),
-                _mapController.camera.zoom,
-              );
-            }
-
+            // --- MODIFIED: Reworked all navigation logic ---
             if (_isRouting && _activeSteps.isNotEmpty) {
               final userLocation = LatLng(
                 position.latitude,
                 position.longitude,
               );
-              if (_currentStepIndex >= _activeSteps.length - 1) {
-                final destination = _finalDestinationCoordinates!;
-                final distanceToDestination = Geolocator.distanceBetween(
+
+              // --- NEW REROUTING & PATH SNAPPING LOGIC ---
+
+              // 1. Find closest point on the *original* full route
+              int closestPointIndex = -1;
+              double minDistance = double.infinity;
+
+              if (_fullRouteCoordinates.isEmpty) return; // No route to check
+
+              for (int i = 0; i < _fullRouteCoordinates.length; i++) {
+                final point = _fullRouteCoordinates[i];
+                final distance = Geolocator.distanceBetween(
                   userLocation.latitude,
                   userLocation.longitude,
-                  destination.latitude,
-                  destination.longitude,
+                  point.latitude,
+                  point.longitude,
                 );
-                if (distanceToDestination < 20.0) {
-                  _speak("You have arrived at your destination.");
-                  _resetNavigationState();
-                }
-              } else {
-                final nextStep = _activeSteps[_currentStepIndex + 1];
-                final distanceToNextManeuver = Geolocator.distanceBetween(
-                  userLocation.latitude,
-                  userLocation.longitude,
-                  nextStep.location.latitude,
-                  nextStep.location.longitude,
-                );
-                const double maneuverThreshold = 25.0;
-                if (distanceToNextManeuver < maneuverThreshold) {
-                  setState(() {
-                    _currentStepIndex++;
-                  });
-                  _speak(_activeSteps[_currentStepIndex].instruction);
+
+                if (distance < minDistance) {
+                  minDistance = distance;
+                  closestPointIndex = i;
                 }
               }
+
+              if (closestPointIndex == -1) return; // Should not happen
+
+              // 2. Check for deviation (Rerouting)
+              if (minDistance > _rerouteThreshold && !_isRerouting) {
+                // --- USER IS OFF-ROUTE ---
+                if (mounted) {
+                  setState(() {
+                    _isRerouting = true; // Set flag to prevent spam
+                    // Hide the old bad line while we recalculate
+                    _remainingRouteCoordinates = [];
+                  });
+                }
+
+                // Fetch a new route from the user's current (off-route) position
+                final bool routeFound = await _fetchRouteDetails(
+                  _selectedProfile,
+                );
+
+                if (routeFound && mounted) {
+                  setState(() {
+                    // Get the newly cached route
+                    final newRoute = _selectedProfile == 'walk'
+                        ? _cachedWalkRoute
+                        : _cachedBikeRoute;
+                    final newSteps = _selectedProfile == 'walk'
+                        ? _cachedWalkSteps
+                        : _cachedBikeSteps;
+
+                    _fullRouteCoordinates = newRoute;
+                    _remainingRouteCoordinates = List.from(
+                      newRoute,
+                    ); // Use full new route
+                    _activeSteps = newSteps;
+                    _currentStepIndex =
+                        0; // Reset to the start of the new route
+                    _isRerouting = false; // Rerouting complete
+                  });
+                  // Announce the new first step
+                  _speak(
+                    "Rerouting. ${_activeSteps.isNotEmpty ? _activeSteps[0].instruction : ''}",
+                  );
+                } else if (mounted) {
+                  // Failed to find a new route, just reset reroute flag
+                  setState(() {
+                    _isRerouting = false;
+                  });
+                }
+              } else if (!_isRerouting) {
+                // --- USER IS ON-ROUTE (CONTINUOUS PATH SHORTENING) ---
+
+                // The remaining route is just the sub-list from the closest point.
+                final List<LatLng> newRemainingPoints = _fullRouteCoordinates
+                    .sublist(closestPointIndex);
+
+                if (mounted) {
+                  setState(() {
+                    _remainingRouteCoordinates = newRemainingPoints;
+                  });
+                }
+
+                // --- Original step-checking logic (can now run) ---
+                if (_currentStepIndex >= _activeSteps.length - 1) {
+                  final destination = _finalDestinationCoordinates!;
+                  final distanceToDestination = Geolocator.distanceBetween(
+                    userLocation.latitude,
+                    userLocation.longitude,
+                    destination.latitude,
+                    destination.longitude,
+                  );
+                  if (distanceToDestination < 20.0) {
+                    _speak("You have arrived at your destination.");
+                    _resetNavigationState();
+                  }
+                } else {
+                  final nextStep = _activeSteps[_currentStepIndex + 1];
+                  final distanceToNextManeuver = Geolocator.distanceBetween(
+                    userLocation.latitude,
+                    userLocation.longitude,
+                    nextStep.location.latitude,
+                    nextStep.location.longitude,
+                  );
+                  const double maneuverThreshold = 25.0;
+                  if (distanceToNextManeuver < maneuverThreshold) {
+                    setState(() {
+                      _currentStepIndex++;
+                    });
+                    _speak(_activeSteps[_currentStepIndex].instruction);
+                  }
+                }
+              }
+              // --- END NEW LOGIC ---
             } else if (_finalDestinationCoordinates != null &&
                 !_isModalLoading) {
               _fetchRouteSummary('walk', fireStateUpdate: true);
@@ -322,7 +537,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (_currentPosition == null || destination == null) return false;
 
     if (fireStateUpdate && !_isModalLoading && mounted) {
-      // Added mounted check
       setState(() {
         if (profile == 'walk') {
           _walkDuration = _walkDistance = '---';
@@ -353,7 +567,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           final durationInSeconds =
               (route['duration'] as num?)?.toDouble() ?? 0.0;
           if (fireStateUpdate && mounted && !_isModalLoading) {
-            // Added mounted check
             setState(() {
               final formattedDistance =
                   '${(distanceInMeters / 1000).toStringAsFixed(1)} km';
@@ -382,8 +595,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final destination = _finalDestinationCoordinates;
     if (_currentPosition == null || destination == null) return false;
 
-    if (mounted) {
-      // Added mounted check
+    // Don't reset state if we are rerouting (it's handled in the listener)
+    if (mounted && !_isRerouting) {
       setState(() {
         if (profile == 'walk') {
           _walkDuration = _walkDistance = '---';
@@ -446,8 +659,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               }
             }
           }
+
+          // We must have at least a start and end point to be valid
+          if (points.length < 2) {
+            debugPrint(
+              'Route details fetch failed for $profile: Too few points',
+            );
+            return false;
+          }
+
           if (mounted) {
-            // Added mounted check
             setState(() {
               final formattedDistance =
                   '${(distanceInMeters / 1000).toStringAsFixed(1)} km';
@@ -482,7 +703,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (minutes < 60) return '$minutes min';
     final hours = minutes ~/ 60;
     final remainingMinutes = minutes % 60;
-    return '$hours hr ${remainingMinutes} min';
+    return '$hours hr $remainingMinutes min';
   }
 
   void _resetNavigationState() {
@@ -490,7 +711,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     setState(() {
       _selectedLocation = null;
       _tappedDestination = null;
-      _routeCoordinates = [];
+      _fullRouteCoordinates = [];
+      _remainingRouteCoordinates = [];
       _selectedProfile = '';
       _walkDuration = _bikeDuration = '---';
       _walkDistance = _bikeDistance = '---';
@@ -504,11 +726,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _currentStepIndex = 0;
       _selectedIndex = 0;
       _isFollowingUser = false; // Stop following
+      _isRerouting = false; // --- NEW: Reset reroute flag
     });
     _flutterTts.stop();
 
     if (mounted && _mapController.camera.rotation != 0) {
-      _mapController.rotate(0); // Instantly set rotation back to 0
+      _animateRotationTo(0); // Use smooth animation
     }
 
     _sheetController.animateTo(
@@ -524,7 +747,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _selectedIndex = 0;
       _selectedLocation = location;
       _tappedDestination = null;
-      _routeCoordinates = [];
+      _fullRouteCoordinates = [];
+      _remainingRouteCoordinates = [];
       _selectedProfile = '';
       _walkDuration = _bikeDuration = _walkDistance = _bikeDistance = '---';
       _isModalLoading = false;
@@ -557,20 +781,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       );
     } else {
       _sheetController.animateTo(
-        0.9,
+        0.95,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
     }
   }
 
-  // ⭐️ Corrected _onMapLongPress signature
   void _onMapLongPress(TapPosition tapPosition, latlong.LatLng point) {
     if (!mounted) return; // Added mounted check
     setState(() {
       _selectedLocation = null;
       _tappedDestination = _toGoogleLatLng(point); // Convert
-      _routeCoordinates = [];
+      _fullRouteCoordinates = [];
+      _remainingRouteCoordinates = [];
       _selectedProfile = '';
       _walkDuration = _bikeDuration = _walkDistance = _bikeDistance = '---';
       _isModalLoading = false;
@@ -591,23 +815,38 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _centerMapOnUser() {
-    if (!mounted) return; // Added mounted check
-    if (_currentPosition != null) {
-      final userLocation = _toFlutterMapLatLng(
-        LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-      );
-      double targetRotation =
-          _isFollowingUser &&
-              _currentPosition!.headingAccuracy > 0 &&
-              _currentPosition!.heading != -1.0
-          ? -_currentPosition!.heading
-          : _mapController.camera.rotation;
-      _mapController.moveAndRotate(userLocation, 18.0, targetRotation);
+    if (!mounted) return;
+
+    if (_isFollowingUser) {
+      // --- IS CURRENTLY FOLLOWING ---
+      // Turn OFF following mode and rotate to North.
+      setState(() {
+        _isFollowingUser = false;
+      });
+
+      _animateRotationTo(0); // Use smooth animation
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Fetching your location...')),
-      );
-      _checkAndStartLocationStream(); // Re-check permissions and stream
+      // --- IS NOT CURRENTLY FOLLOWING ---
+      // Turn ON following mode and move to the user's location.
+      // The CurrentLocationLayer will handle the rotation to the user's heading.
+      setState(() {
+        _isFollowingUser = true;
+      });
+
+      if (_currentPosition != null) {
+        _mapController.move(
+          _toFlutterMapLatLng(
+            LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+          ),
+          18.0, // Zoom in a bit
+        );
+      } else {
+        // If we don't have a position, just show a message.
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Fetching your location...')),
+        );
+        _checkAndStartLocationStream();
+      }
     }
   }
 
@@ -617,6 +856,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     required List<RouteStep> steps,
   }) async {
     if (!mounted) return; // Added mounted check
+
+    _clearSearch(); // Clear search/dismiss keyboard
+
     // 1. Animate the main sheet down
     await _sheetController.animateTo(
       0.0,
@@ -628,31 +870,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // 2. Set state for navigation & start following
     setState(() {
       _selectedProfile = profile;
-      _routeCoordinates = route;
+      _fullRouteCoordinates = route;
+      _remainingRouteCoordinates = List.from(route); // Start with a full copy
       _activeSteps = steps;
       _currentStepIndex = 0;
-      _isRouting = true;
-      _isFollowingUser = true;
+      _isRouting = true; // This will hide the search bar AND hide the bottom UI
+      _isFollowingUser = true; // This now controls the map
+      _isRerouting = false; // --- NEW: Reset reroute flag ---
     });
 
-    // 3. Move map to user's location and rotate immediately
+    // 3. Move map to user's location
+    // The CurrentLocationLayer will handle the rotation automatically
     if (_currentPosition != null) {
-      double initialRotation = 0;
-      if (_currentPosition!.headingAccuracy > 0 &&
-          _currentPosition!.heading != -1.0) {
-        initialRotation = -_currentPosition!.heading;
-      }
-      _mapController.moveAndRotate(
+      _mapController.move(
         _toFlutterMapLatLng(
           LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
         ),
         18.0,
-        initialRotation,
       );
     } else {
       // Fallback if no position yet: Fit route bounds
       final flutterMapPoints = route.map(_toFlutterMapLatLng).toList();
-      // ⭐️ Corrected LatLngBounds usage
       if (flutterMapPoints.isNotEmpty) {
         final bounds = LatLngBounds.fromPoints(flutterMapPoints);
         _mapController.fitCamera(
@@ -701,15 +939,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             }
             return DraggableScrollableSheet(
               initialChildSize: 0.5,
-              minChildSize: 0.25,
-              maxChildSize: 0.9,
+              minChildSize: 0,
+              maxChildSize: 0.95,
               expand: false,
               builder: (context, scrollController) {
                 final startLocationText = _currentPosition != null
                     ? 'Your Current Location'
                     : 'Getting Location...';
+                // Check the *cached* route, not the active one
                 final bool showRouteDetails =
-                    _selectedProfile.isNotEmpty && _routeCoordinates.isNotEmpty;
+                    _selectedProfile.isNotEmpty &&
+                    (_selectedProfile == 'walk'
+                        ? _cachedWalkRoute.isNotEmpty
+                        : _cachedBikeRoute.isNotEmpty);
                 return Padding(
                   padding: const EdgeInsets.all(16.0),
                   child: ListView(
@@ -764,17 +1006,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                   onTap: () {
                                     if (_cachedWalkRoute.isNotEmpty &&
                                         _cachedWalkSteps.isNotEmpty) {
-                                      if (Navigator.canPop(sheetContext))
+                                      if (Navigator.canPop(sheetContext)) {
                                         Navigator.pop(sheetContext);
+                                      }
                                       _startNavigation(
                                         profile: 'walk',
                                         route: _cachedWalkRoute,
                                         steps: _cachedWalkSteps,
                                       );
                                     } else if (_walkDuration != 'Err') {
-                                      if (Navigator.canPop(sheetContext))
+                                      if (Navigator.canPop(sheetContext)) {
                                         Navigator.pop(sheetContext);
-                                      if (mounted)
+                                      }
+                                      if (mounted) {
                                         ScaffoldMessenger.of(
                                           context,
                                         ).showSnackBar(
@@ -784,6 +1028,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                             ),
                                           ),
                                         );
+                                      }
                                     }
                                   },
                                 ),
@@ -796,17 +1041,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                   onTap: () {
                                     if (_cachedBikeRoute.isNotEmpty &&
                                         _cachedBikeSteps.isNotEmpty) {
-                                      if (Navigator.canPop(sheetContext))
+                                      if (Navigator.canPop(sheetContext)) {
                                         Navigator.pop(sheetContext);
+                                      }
                                       _startNavigation(
                                         profile: 'bike',
                                         route: _cachedBikeRoute,
                                         steps: _cachedBikeSteps,
                                       );
                                     } else if (_bikeDuration != 'Err') {
-                                      if (Navigator.canPop(sheetContext))
+                                      if (Navigator.canPop(sheetContext)) {
                                         Navigator.pop(sheetContext);
-                                      if (mounted)
+                                      }
+                                      if (mounted) {
                                         ScaffoldMessenger.of(
                                           context,
                                         ).showSnackBar(
@@ -816,6 +1063,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                             ),
                                           ),
                                         );
+                                      }
                                     }
                                   },
                                 ),
@@ -824,11 +1072,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       const Divider(height: 24),
                       if (showRouteDetails) ...[
                         _buildStep(
-                          'Total Distance: ${_activeRouteDistance}',
+                          'Total Distance: $_activeRouteDistance',
                           icon: Icons.straighten,
                         ),
                         _buildStep(
-                          'Estimated Time: ${_activeRouteDuration}',
+                          'Estimated Time: $_activeRouteDuration',
                           icon: Icons.timer,
                         ),
                         const Divider(height: 24),
@@ -938,7 +1186,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             const Divider(),
             _buildEventCard("Hackathon 2025", "TT Auditorium", "25th Oct"),
             _buildEventCard("Tech Expo Day", "Main Lawn", "30th Oct"),
-            _buildEventCard("Cultural Fest", "Open Arena", "5th Nov"),
+            _buildEventCard("Cultural Fest 125", "Open Arena", "5th Nov"),
             const SizedBox(height: 50),
           ],
         );
@@ -1030,6 +1278,49 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    // --- START: NEW DYNAMIC LOGIC ---
+    final mediaQuery = MediaQuery.of(context);
+    final screenHeight = mediaQuery.size.height;
+    final bottomPadding = mediaQuery.padding.bottom;
+
+    // 1. Define the search bar's total height (including status bar)
+    final double searchBarHeight =
+        mediaQuery.padding.top + 80.0; // Approx height
+
+    // 2. Define the animation trigger ranges
+    const double sheetStartMove = 0.2; // Sheet pos when animation starts
+    const double sheetEndMove = 0.4; // Sheet pos when animation is complete
+
+    // 3. Calculate the progress of the sheet's drag
+    // This calculates how far (0.0 to 1.0) the user has dragged
+    // within our defined range (0.2 to 0.4).
+    double dragProgress =
+        (_sheetPosition - sheetStartMove) / (sheetEndMove - sheetStartMove);
+
+    // 4. Clamp progress between 0.0 (not started) and 1.0 (fully finished)
+    dragProgress = dragProgress.clamp(0.0, 1.0);
+
+    // 5. Calculate the search bar's vertical offset
+    final double searchBarTopOffset = -searchBarHeight * dragProgress;
+
+    // 6. Calculate the search bar's opacity
+    final double searchBarOpacity = _isRouting ? 0.0 : (1.0 - dragProgress);
+
+    // GPS Button logic (remains the same)
+    final bool isSheetLow = _sheetPosition < 0.25;
+    final double gpsButtonOpacity = (_isRouting || !isSheetLow) ? 0.0 : 1.0;
+
+    // 7. Calculate the height of the navigation card (approximation)
+    // The navigation card is roughly 200 units tall + bottom padding.
+    // The AnimatedSlide has a padding of 12.0 on all sides.
+    final double navCardHeight = 200.0 + bottomPadding;
+
+    // 8. Calculate the dynamic bottom position for the Re-centre button
+    // The Re-centre button should sit just above the navigation card when it's visible.
+    final double recentreButtonBottomOffset =
+        navCardHeight + 16.0; // Card height + spacing
+    // --- END: NEW DYNAMIC LOGIC ---
+
     final campusCenter = latlong.LatLng(12.970856, 79.159515);
 
     final List<Marker> locationMarkers = [];
@@ -1050,10 +1341,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
 
     final List<Polyline> routePolylines = [];
-    if (_routeCoordinates.isNotEmpty) {
+    if (_remainingRouteCoordinates.isNotEmpty) {
       routePolylines.add(
         Polyline(
-          points: _routeCoordinates.map(_toFlutterMapLatLng).toList(),
+          points: _remainingRouteCoordinates.map(_toFlutterMapLatLng).toList(),
           strokeWidth: 5.0,
           color: Colors.deepPurple,
         ),
@@ -1061,6 +1352,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
 
     return Scaffold(
+      resizeToAvoidBottomInset: false, // Prevents resize when keyboard appears
       extendBody: true,
       body: Stack(
         children: [
@@ -1078,29 +1370,53 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 ),
                 onLongPress: _onMapLongPress,
                 onPointerDown: (details, point) {
-                  // ⭐️ Corrected onPointerDown usage
-                  if (_isFollowingUser &&
-                      _isRouting &&
-                      details.buttons == kPrimaryButton) {
-                    if (mounted)
+                  // Manually panning will stop the "follow" mode
+                  if (_isFollowingUser && details.buttons == kPrimaryButton) {
+                    if (mounted) {
                       setState(() {
                         _isFollowingUser = false;
                       });
+                    }
                   }
                 },
               ),
               children: [
                 TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  // --- FIX: Using public CartoDB Dark Tileset (no 401 error) ---
+                  urlTemplate: _isNightMode
+                      ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+                      : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.example.vit_navigation_app',
                   maxZoom: 19.0,
-                  // ⭐️ Removed const from CachedTileProvider
                   tileProvider: CachedTileProvider(),
+                  // --- FIX: Explicitly handle {r} placeholder to clear warning ---
+                  retinaMode: true,
                 ),
                 if (_isLocationServiceEnabled)
                   CurrentLocationLayer(
-                    // Using CurrentLocationLayer
-                    // style: LocationMarkerStyle(...) // Optional: Customize marker appearance
+                    followOnLocationUpdate: _isFollowingUser
+                        ? FollowOnLocationUpdate.always
+                        : FollowOnLocationUpdate.never,
+                    turnOnHeadingUpdate: _isFollowingUser
+                        ? TurnOnHeadingUpdate.always
+                        : TurnOnHeadingUpdate.never,
+                    turnAnimationCurve: Curves.easeOut,
+                    turnAnimationDuration: const Duration(milliseconds: 400),
+                    style: LocationMarkerStyle(
+                      marker: DefaultLocationMarker(
+                        color: Colors.blue.shade700,
+                        child: const Padding(
+                          padding: EdgeInsets.all(8.0),
+                          child: Icon(
+                            Icons.navigation,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                      markerSize: const Size(40, 40),
+                      showHeadingSector: false,
+                    ),
                   ),
                 if (routePolylines.isNotEmpty)
                   PolylineLayer(polylines: routePolylines),
@@ -1108,197 +1424,420 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ],
             ),
           ),
+
+          // --- MODIFIED: SEARCH BAR WRAPPER ---
+          Transform.translate(
+            offset: Offset(0, searchBarTopOffset), // Use the new dynamic offset
+            child: AnimatedOpacity(
+              opacity: searchBarOpacity, // Use the new dynamic opacity
+              duration: const Duration(milliseconds: 100), // Quick fade
+              child: IgnorePointer(
+                // Ignore taps if routing OR if it's sliding off-screen
+                ignoring: _isRouting || dragProgress > 0.0,
+                child: Stack(
+                  // Use Stack to keep original positioning logic
+                  children: [
+                    // --- Search Bar ---
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: SafeArea(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(30),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.1),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: TextField(
+                              controller: _searchController,
+                              decoration: InputDecoration(
+                                icon: const Icon(
+                                  Icons.search,
+                                  color: Colors.grey,
+                                ),
+                                hintText:
+                                    'Search for a building, lab, or office...',
+                                border: InputBorder.none,
+                                suffixIcon: _isSearchActive
+                                    ? IconButton(
+                                        icon: const Icon(
+                                          Icons.clear,
+                                          color: Colors.grey,
+                                        ),
+                                        onPressed: _clearSearch,
+                                      )
+                                    : null,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // --- Search Results List ---
+                    Positioned(
+                      top: MediaQuery.of(context).padding.top + 80.0,
+                      left: 16.0,
+                      right: 16.0,
+                      child: Visibility(
+                        visible: _isSearchActive && _searchResults.isNotEmpty,
+                        child: Padding(
+                          padding: EdgeInsets.only(
+                            bottom: MediaQuery.of(context).viewInsets.bottom,
+                          ),
+                          child: Material(
+                            elevation: 8,
+                            borderRadius: BorderRadius.circular(20),
+                            child: Container(
+                              constraints: BoxConstraints(
+                                maxHeight:
+                                    MediaQuery.of(context).size.height * 0.4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: ListView.builder(
+                                shrinkWrap: true,
+                                padding: EdgeInsets.zero,
+                                itemCount: _searchResults.length,
+                                itemBuilder: (context, index) {
+                                  final location = _searchResults[index];
+                                  return ListTile(
+                                    title: Text(location.name),
+                                    subtitle: Text(location.category),
+                                    leading: const Icon(
+                                      Icons.location_on_outlined,
+                                      color: Colors.blue,
+                                    ),
+                                    onTap: () =>
+                                        _onSearchResultTapped(location),
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // --- END OF SEARCH BAR MODIFICATION ---
+
+          // --- NEW: NIGHT MODE BUTTON (Top Right, Fades with Search/Sheet) ---
           Positioned(
-            top: 0,
+            top: mediaQuery.padding.top + 80.0, // Under search bar (approx)
+            right: 16.0,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 300),
+              opacity: gpsButtonOpacity, // Same logic as GPS button
+              child: IgnorePointer(
+                ignoring: gpsButtonOpacity == 0.0,
+                child: FloatingActionButton(
+                  heroTag: 'night_mode_btn',
+                  onPressed: _toggleNightMode,
+                  backgroundColor: _isNightMode ? Colors.white : Colors.black,
+                  foregroundColor: _isNightMode ? Colors.black : Colors.white,
+                  mini: true, // Make it smaller to fit
+                  child: Icon(_isNightMode ? Icons.wb_sunny : Icons.dark_mode),
+                ),
+              ),
+            ),
+          ),
+          // --- END NEW NIGHT MODE BUTTON ---
+
+          // --- MODIFIED: RE-CENTRE BUTTON (FOR NAVIGATION MODE) ---
+          if (_isRouting && !_isFollowingUser)
+            Positioned(
+              // Kept on the right, above the nav card
+              bottom: recentreButtonBottomOffset + 10,
+              right: 16.0,
+              child: Card(
+                elevation: 4,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(30),
+                ),
+                color: Colors.blueAccent, // Dark background
+                child: InkWell(
+                  onTap: _centerMapOnUser, // Re-uses existing logic
+                  borderRadius: BorderRadius.circular(30),
+                  child: const Padding(
+                    // Increased vertical padding for height
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 16.0,
+                      vertical: 16.0,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.navigation_outlined,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                        SizedBox(width: 8),
+                        Text(
+                          'Re-centre',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          // --- END NEW RE-CENTRE BUTTON ---
+
+          // --- GPS Button (Existing, only visible when sheet is low and not routing) ---
+          Positioned(
+            right: 16.0,
+            bottom: (screenHeight * _sheetPosition) + 20.0,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 300),
+              opacity: gpsButtonOpacity,
+              child: IgnorePointer(
+                ignoring: gpsButtonOpacity == 0.0,
+                child: FloatingActionButton(
+                  heroTag: 'gps_btn',
+                  onPressed: _centerMapOnUser,
+                  backgroundColor: _isFollowingUser
+                      ? Colors.white
+                      : Colors.blue[600],
+                  foregroundColor: _isFollowingUser
+                      ? Colors.blue[600]
+                      : Colors.white,
+                  child: Icon(
+                    _isFollowingUser ? Icons.navigation : Icons.gps_fixed,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // =========================================================================
+          // === DRAGGABLE SCROLLABLE SHEET WRAPPED IN ANIMATED SLIDE ===
+          // =========================================================================
+          AnimatedSlide(
+            // Slide down by 100% of the screen height (vertical offset of 1.0)
+            offset: _isRouting ? const Offset(0, 1) : const Offset(0, 0),
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeOutCubic,
+            child: DraggableScrollableSheet(
+              controller: _sheetController,
+              initialChildSize: 0.2,
+              minChildSize: 0.2,
+              maxChildSize: 0.95,
+              expand: true,
+              builder: (BuildContext context, ScrollController scrollController) {
+                // IgnorePointer when sliding off-screen to prevent interaction
+                return IgnorePointer(
+                  ignoring: _isRouting,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).scaffoldBackgroundColor,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(20),
+                        topRight: Radius.circular(20),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 10,
+                          offset: const Offset(0, -5),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: SingleChildScrollView(
+                            controller: scrollController,
+                            child: Column(
+                              children: [
+                                // --- HEADER ---
+                                Padding(
+                                  padding: const EdgeInsets.only(
+                                    top: 10.0,
+                                    bottom: 8.0,
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      Center(
+                                        child: Container(
+                                          width: 40,
+                                          height: 5,
+                                          decoration: BoxDecoration(
+                                            color: Colors.grey[300],
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16.0,
+                                        ),
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Text(
+                                              _selectedIndex == 0
+                                                  ? 'Latest in the area'
+                                                  : _getTabTitle(
+                                                      _selectedIndex,
+                                                    ),
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .headlineSmall
+                                                  ?.copyWith(
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                            ),
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 8,
+                                                    vertical: 4,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.grey[200],
+                                                borderRadius:
+                                                    BorderRadius.circular(15),
+                                              ),
+                                              child: Row(
+                                                children: [
+                                                  Text(
+                                                    '24°',
+                                                    style: TextStyle(
+                                                      color: Colors.grey[700],
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                  const Icon(
+                                                    Icons.cloud,
+                                                    size: 16,
+                                                    color: Colors.grey,
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  const Text(
+                                                    '● NAQI',
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: Colors.green,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                // --- DIVIDER ---
+                                const Divider(height: 1),
+                                // --- MAIN CONTENT ---
+                                Container(
+                                  padding: const EdgeInsets.only(
+                                    top: 16.0,
+                                    // Removed bottom padding because the navigation bar is moved
+                                    bottom: 0.0,
+                                  ),
+                                  child: _buildCurrentContent(_selectedIndex),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        // --- REMOVED NAVIGATION BAR FROM HERE ---
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          // =========================================================================
+          // === NAVIGATION BAR WRAPPED IN ANIMATED SLIDE AND REPOSITIONED ===
+          // =========================================================================
+          Positioned(
+            bottom: 0,
             left: 0,
             right: 0,
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(30),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: const TextField(
-                    decoration: InputDecoration(
-                      icon: Icon(Icons.search, color: Colors.grey),
-                      hintText: 'Search for a building, lab, or office...',
-                      border: InputBorder.none,
+            child: AnimatedSlide(
+              // Slide down by 100% of its height (Offset(0, 2) is a safe value for this)
+              offset: _isRouting ? const Offset(0, 2) : const Offset(0, 0),
+              duration: const Duration(milliseconds: 400),
+              curve: Curves.easeOutCubic,
+              child: IgnorePointer(
+                ignoring: _isRouting, // Disable interaction when hidden
+                child: SafeArea(
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      left: 16.0,
+                      right: 16.0,
+                      bottom:
+                          bottomPadding +
+                          20.0, // Ensures margin from screen edge
+                      top: 8.0,
+                    ),
+                    child: CustomNavigationBar(
+                      selectedIndex: _selectedIndex,
+                      onItemSelected: _onItemTapped,
+                      items: const [
+                        CustomNavigationBarItem(
+                          icon: Icons.explore_outlined,
+                          selectedIcon: Icons.explore,
+                          label: 'Explore',
+                        ),
+                        CustomNavigationBarItem(
+                          icon: Icons.list_alt_outlined,
+                          selectedIcon: Icons.list_alt,
+                          label: 'Directory',
+                        ),
+                        CustomNavigationBarItem(
+                          icon: Icons.calendar_today_outlined,
+                          selectedIcon: Icons.calendar_today,
+                          label: 'Events',
+                        ),
+                        CustomNavigationBarItem(
+                          icon: Icons.person_outline,
+                          selectedIcon: Icons.person,
+                          label: 'Profile',
+                        ),
+                      ],
                     ),
                   ),
                 ),
               ),
             ),
           ),
-          Positioned(
-            right: 16.0,
-            bottom: 230.0,
-            child: FloatingActionButton(
-              heroTag: 'gps_btn',
-              onPressed: _centerMapOnUser,
-              backgroundColor: Colors.blue[600],
-              child: const Icon(Icons.gps_fixed, color: Colors.white),
-            ),
-          ),
-          DraggableScrollableSheet(
-            controller: _sheetController,
-            initialChildSize: 0.2,
-            minChildSize: 0.0,
-            maxChildSize: 0.9,
-            expand: true,
-            builder: (BuildContext context, ScrollController scrollController) {
-              return Container(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).scaffoldBackgroundColor,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(20),
-                    topRight: Radius.circular(20),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 10,
-                      offset: const Offset(0, -5),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(top: 10.0, bottom: 8.0),
-                      child: Column(
-                        children: [
-                          Center(
-                            child: Container(
-                              width: 40,
-                              height: 5,
-                              decoration: BoxDecoration(
-                                color: Colors.grey[300],
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16.0,
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  _selectedIndex == 0
-                                      ? 'Latest in the area'
-                                      : _getTabTitle(_selectedIndex),
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .headlineSmall
-                                      ?.copyWith(fontWeight: FontWeight.bold),
-                                ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.grey[200],
-                                    borderRadius: BorderRadius.circular(15),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Text(
-                                        '24°',
-                                        style: TextStyle(
-                                          color: Colors.grey[700],
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      const Icon(
-                                        Icons.cloud,
-                                        size: 16,
-                                        color: Colors.grey,
-                                      ),
-                                      const SizedBox(width: 4),
-                                      const Text(
-                                        '● NAQI',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.green,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Divider(height: 1),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        controller: scrollController,
-                        child: Container(
-                          padding: const EdgeInsets.only(
-                            top: 16.0,
-                            bottom: 100.0,
-                          ),
-                          child: _buildCurrentContent(_selectedIndex),
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: EdgeInsets.only(
-                        left: 16.0,
-                        right: 16.0,
-                        bottom: MediaQuery.of(context).padding.bottom + 20.0,
-                        top: 8.0,
-                      ),
-                      child: CustomNavigationBar(
-                        selectedIndex: _selectedIndex,
-                        onItemSelected: _onItemTapped,
-                        items: const [
-                          CustomNavigationBarItem(
-                            icon: Icons.explore_outlined,
-                            selectedIcon: Icons.explore,
-                            label: 'Explore',
-                          ),
-                          CustomNavigationBarItem(
-                            icon: Icons.list_alt_outlined,
-                            selectedIcon: Icons.list_alt,
-                            label: 'Directory',
-                          ),
-                          CustomNavigationBarItem(
-                            icon: Icons.calendar_today_outlined,
-                            selectedIcon: Icons.calendar_today,
-                            label: 'Events',
-                          ),
-                          CustomNavigationBarItem(
-                            icon: Icons.person_outline,
-                            selectedIcon: Icons.person,
-                            label: 'Profile',
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
+          // --- END OF NAVIGATION BAR MODIFICATION ---
+
+          // --- START OF NAVIGATION CARD (ROUTE INSTRUCTIONS) ---
           Positioned(
             bottom: 0,
             left: 0,
@@ -1306,6 +1845,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             child: AnimatedSlide(
               duration: const Duration(milliseconds: 300),
               curve: Curves.easeOutCubic,
+              // The instructions card appears when _isRouting is true
               offset: _isRouting ? Offset.zero : const Offset(0, 2),
               child: SafeArea(
                 child: Padding(
@@ -1372,14 +1912,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(
-                                Icons.safety_check_outlined,
+                                _isRerouting
+                                    ? Icons.sync
+                                    : Icons.safety_check_outlined,
                                 size: 18,
                                 color: Colors.blueGrey[600],
                               ),
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  "Safety tip: When crossing a path, look both ways! (We don't do collision detection... yet.)",
+                                  _isRerouting
+                                      ? "Finding a new route..."
+                                      : "Safety tip: When crossing a path, look both ways!",
                                   style: Theme.of(context).textTheme.bodySmall
                                       ?.copyWith(
                                         color: Colors.blueGrey[700],
@@ -1412,6 +1956,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             ),
           ),
+          // --- END OF NAVIGATION CARD ---
         ],
       ),
     );
@@ -1591,11 +2136,11 @@ class DirectoryScreen extends StatelessWidget {
                         },
                       ),
                     );
-                  }).toList(),
+                  }),
                 ],
               ),
             );
-          }).toList(),
+          }),
         ],
       ),
     );
@@ -1619,6 +2164,7 @@ class _TransportationOption extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) {
+    // Corrected BuildContext
     final primaryColor = Colors.blue[700]!;
     final cardColor = isSelected ? primaryColor : Colors.white;
     final iconTextColor = isSelected ? Colors.white : primaryColor;
@@ -1664,10 +2210,9 @@ class _TransportationOption extends StatelessWidget {
   }
 }
 
-// ⭐️ Corrected CachedTileProvider constructor
+// Corrected CachedTileProvider constructor
 class CachedTileProvider extends TileProvider {
-  // Removed const
-  CachedTileProvider();
+  CachedTileProvider(); // Removed const
   @override
   ImageProvider getImage(TileCoordinates coordinates, TileLayer options) {
     return CachedNetworkImageProvider(getTileUrl(coordinates, options));
