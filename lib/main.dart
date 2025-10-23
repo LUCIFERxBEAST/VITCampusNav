@@ -131,6 +131,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   static const int _bikePort = 5001;
 
   final List<Location> _allLocations = const [
+    // --- Original Locations (Retained) ---
     Location(
       name: 'Technology Tower (TT)',
       category: 'Academic Block',
@@ -161,6 +162,183 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       category: 'Hostel',
       description: 'One of the largest student hostels.',
       coordinates: LatLng(12.971700, 79.155800),
+    ),
+    // ------------------------------------
+
+    // --- New Locations from Image ---
+    Location(
+      name: 'B block',
+      category: 'Academic Block',
+      description: 'Academic/Department Block B.',
+      coordinates: LatLng(12.9744807, 79.1575831),
+    ),
+    Location(
+      name: 'B Annexe',
+      category: 'Academic Block',
+      description: 'Academic/Department Block B Annexe.',
+      coordinates: LatLng(12.9749303, 79.1573685),
+    ),
+    Location(
+      name: 'F block',
+      category: 'Academic Block',
+      description: 'Academic/Department Block F.',
+      coordinates: LatLng(12.9739789, 79.1583341),
+    ),
+    Location(
+      name: 'A block',
+      category: 'Academic Block',
+      description: 'Academic/Department Block A.',
+      coordinates: LatLng(12.9730641, 79.1573417),
+    ),
+    Location(
+      name: 'C block',
+      category: 'Academic Block',
+      description: 'Academic/Department Block C.',
+      coordinates: LatLng(12.9730589, 79.158141),
+    ),
+    Location(
+      name: 'D annexe',
+      category: 'Academic Block',
+      description: 'Academic/Department Block D Annexe.',
+      coordinates: LatLng(12.9733359, 79.1588652),
+    ),
+    Location(
+      name: 'D block',
+      category: 'Academic Block',
+      description: 'Academic/Department Block D.',
+      coordinates: LatLng(12.97297, 79.1588277),
+    ),
+    Location(
+      name: 'G block',
+      category: 'Academic Block',
+      description: 'Academic/Department Block G.',
+      coordinates: LatLng(12.9734143, 79.1597182),
+    ),
+    Location(
+      name: 'E block',
+      category: 'Academic Block',
+      description: 'Academic/Department Block E.',
+      coordinates: LatLng(12.9729595, 79.1597611),
+    ),
+    Location(
+      name: 'Sanjay shop benzo',
+      category: 'Shop/Café',
+      description: 'A popular campus shop.',
+      coordinates: LatLng(12.972787, 79.1592514),
+    ),
+    Location(
+      name: 'Enzo',
+      category: 'Shop/Café',
+      description: 'Campus eating spot/café.',
+      coordinates: LatLng(12.9722442, 79.1588545),
+    ),
+    Location(
+      name: 'H block',
+      category: 'Academic Block',
+      description: 'Academic/Department Block H.',
+      coordinates: LatLng(12.9723793, 79.1575026),
+    ),
+    Location(
+      name: 'J block',
+      category: 'Academic Block',
+      description: 'Academic/Department Block J.',
+      coordinates: LatLng(12.9723688, 79.1582215),
+    ),
+    Location(
+      name: 'Chota dhobi',
+      category: 'Hostel Services',
+      description: 'Small laundry service near men\'s hostels.',
+      coordinates: LatLng(12.9721702, 79.1587794),
+    ),
+    Location(
+      name: 'Men\'s Hostel Indoor Complex (Sports)',
+      category: 'Sports',
+      description: 'Indoor sports facilities within men\'s hostel area.',
+      coordinates: LatLng(12.9721336, 79.1591495),
+    ),
+    Location(
+      name: 'Bright power laundry',
+      category: 'Hostel Services',
+      description: 'Laundry service facility.',
+      coordinates: LatLng(12.9723688, 79.1593802),
+    ),
+    Location(
+      name: 'Waste Water Treatment Plant (West)',
+      category: 'Utilities',
+      description: 'West side waste water treatment facility.',
+      coordinates: LatLng(12.9721075, 79.1599542),
+    ),
+    Location(
+      name: 'Waste Water Treatment Plant (East)',
+      category: 'Utilities',
+      description: 'East side waste water treatment facility.',
+      coordinates: LatLng(12.9721231, 79.1605952),
+    ),
+    Location(
+      name: 'MH swimming pool',
+      category: 'Hostel Sports',
+      description: 'Men\'s Hostel swimming pool.',
+      coordinates: LatLng(12.9744546, 79.1608179),
+    ),
+    Location(
+      name: 'Park (Thiruvalluvar Statue)',
+      category: 'Landmark',
+      description: 'Park area featuring the Thiruvalluvar statue.',
+      coordinates: LatLng(12.9718408, 79.156816),
+    ),
+    Location(
+      name: 'MH volleyball court',
+      category: 'Hostel Sports',
+      description: 'Men\'s Hostel volleyball court.',
+      coordinates: LatLng(12.9717938, 79.1571406),
+    ),
+    Location(
+      name: 'MH basketball court',
+      category: 'Hostel Sports',
+      description: 'Men\'s Hostel basketball court.',
+      coordinates: LatLng(12.9717598, 79.1574034),
+    ),
+    Location(
+      name: 'MH TENNIS COURT',
+      category: 'Hostel Sports',
+      description: 'Men\'s Hostel tennis court.',
+      coordinates: LatLng(12.971718, 79.1577843),
+    ),
+    Location(
+      name: 'K BLOCK',
+      category: 'Academic Block',
+      description: 'Academic/Department Block K.',
+      coordinates: LatLng(12.9723296, 79.1615045),
+    ),
+    Location(
+      name: 'FOOD PARK (FOOD MALL + FOODCY)',
+      category: 'Food Courts',
+      description: 'Food park, mall, and Foodcy outlet.',
+      coordinates: LatLng(12.9723845, 79.1620812),
+    ),
+    Location(
+      name: 'MH NESCAFE',
+      category: 'Shop/Café',
+      description: 'Nescafe stall in the men\'s hostel area.',
+      coordinates: LatLng(12.9726851, 79.1620409),
+    ),
+    Location(
+      name: 'L BLOCK',
+      category: 'Academic Block',
+      description: 'Academic/Department Block L.',
+      coordinates: LatLng(12.9725047, 79.1627812),
+    ),
+    Location(
+      name: 'SJT (S.J.T. Block)',
+      category: 'Academic Block',
+      description: 'S.J.T. Academic Block.',
+      coordinates: LatLng(12.9709496, 79.1640177),
+    ),
+    Location(
+      name: 'TT (Technology Tower) East Side',
+      category: 'Academic Block',
+      description: 'Technology Tower entrance/east side.',
+      coordinates: LatLng(12.9706072, 79.1595545),
     ),
   ];
 
