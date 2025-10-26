@@ -24,12 +24,15 @@ class Location {
   final String category;
   final String description;
   final LatLng coordinates;
+  // NEW: Used to group multiple entry points (gates) to one building
+  final String? buildingGroup;
 
   const Location({
     required this.name,
     required this.category,
     required this.description,
     required this.coordinates,
+    this.buildingGroup, // Added to constructor
   });
 }
 
@@ -126,219 +129,638 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // Use 127.0.0.1 for local Docker access
   static const String _osrmHost = '127.0.0.1';
   // Port 6000 used for walk profile due to conflict on 5000
-  static const int _walkPort = 6000;
+  static const int _walkPort = 8999;
   // Port 5001 assumed for bike profile
   static const int _bikePort = 5001;
 
+  // =========================================================================
+  // === ALL CAMPUS LOCATIONS (COMPLETELY OVERHAULED) ===
+  // =========================================================================
   final List<Location> _allLocations = const [
-    // --- Original Locations (Retained) ---
-    Location(
-      name: 'Technology Tower (TT)',
-      category: 'Academic Block',
-      description:
-          'Houses CSE/IT departments, major labs, and faculty offices.',
-      coordinates: LatLng(12.970591, 79.159508),
-    ),
+    // --- GATES & ENTRANCES ---
     Location(
       name: 'Main Gate',
       category: 'Entrance',
       description: 'The primary entrance and exit of the campus.',
-      coordinates: LatLng(12.967885, 79.157833),
+      coordinates: LatLng(12.9682391, 79.1558826),
     ),
     Location(
-      name: 'Central Library',
-      category: 'Admin',
-      description: 'The main library facility.',
-      coordinates: LatLng(12.972300, 79.158700),
+      name: 'Gate no 03',
+      category: 'Entrance',
+      description: 'Campus Entrance/Exit Gate 3.',
+      coordinates: LatLng(12.9675699, 79.1586292),
     ),
     Location(
-      name: 'Food Court Complex (FCC)',
-      category: 'Food Courts',
-      description: 'Multi-cuisine food court area.',
-      coordinates: LatLng(12.969500, 79.158500),
+      name: 'Gate no 02',
+      category: 'Entrance',
+      description: 'Campus Entrance/Exit Gate 2.',
+      coordinates: LatLng(12.9704451, 79.154048),
     ),
     Location(
-      name: 'Men\'s Hostel Block A',
-      category: 'Hostel',
-      description: 'One of the largest student hostels.',
-      coordinates: LatLng(12.971700, 79.155800),
-    ),
-    // ------------------------------------
-
-    // --- New Locations from Image ---
-    Location(
-      name: 'B block',
-      category: 'Academic Block',
-      description: 'Academic/Department Block B.',
-      coordinates: LatLng(12.9744807, 79.1575831),
-    ),
-    Location(
-      name: 'B Annexe',
-      category: 'Academic Block',
-      description: 'Academic/Department Block B Annexe.',
-      coordinates: LatLng(12.9749303, 79.1573685),
-    ),
-    Location(
-      name: 'F block',
-      category: 'Academic Block',
-      description: 'Academic/Department Block F.',
-      coordinates: LatLng(12.9739789, 79.1583341),
-    ),
-    Location(
-      name: 'A block',
-      category: 'Academic Block',
-      description: 'Academic/Department Block A.',
-      coordinates: LatLng(12.9730641, 79.1573417),
-    ),
-    Location(
-      name: 'C block',
-      category: 'Academic Block',
-      description: 'Academic/Department Block C.',
-      coordinates: LatLng(12.9730589, 79.158141),
-    ),
-    Location(
-      name: 'D annexe',
-      category: 'Academic Block',
-      description: 'Academic/Department Block D Annexe.',
-      coordinates: LatLng(12.9733359, 79.1588652),
-    ),
-    Location(
-      name: 'D block',
-      category: 'Academic Block',
-      description: 'Academic/Department Block D.',
-      coordinates: LatLng(12.97297, 79.1588277),
-    ),
-    Location(
-      name: 'G block',
-      category: 'Academic Block',
-      description: 'Academic/Department Block G.',
-      coordinates: LatLng(12.9734143, 79.1597182),
-    ),
-    Location(
-      name: 'E block',
-      category: 'Academic Block',
-      description: 'Academic/Department Block E.',
-      coordinates: LatLng(12.9729595, 79.1597611),
-    ),
-    Location(
-      name: 'Sanjay shop benzo',
-      category: 'Shop/Café',
-      description: 'A popular campus shop.',
-      coordinates: LatLng(12.972787, 79.1592514),
-    ),
-    Location(
-      name: 'Enzo',
-      category: 'Shop/Café',
-      description: 'Campus eating spot/café.',
-      coordinates: LatLng(12.9722442, 79.1588545),
-    ),
-    Location(
-      name: 'H block',
-      category: 'Academic Block',
-      description: 'Academic/Department Block H.',
-      coordinates: LatLng(12.9723793, 79.1575026),
-    ),
-    Location(
-      name: 'J block',
-      category: 'Academic Block',
-      description: 'Academic/Department Block J.',
-      coordinates: LatLng(12.9723688, 79.1582215),
-    ),
-    Location(
-      name: 'Chota dhobi',
-      category: 'Hostel Services',
-      description: 'Small laundry service near men\'s hostels.',
-      coordinates: LatLng(12.9721702, 79.1587794),
-    ),
-    Location(
-      name: 'Men\'s Hostel Indoor Complex (Sports)',
-      category: 'Sports',
-      description: 'Indoor sports facilities within men\'s hostel area.',
-      coordinates: LatLng(12.9721336, 79.1591495),
-    ),
-    Location(
-      name: 'Bright power laundry',
-      category: 'Hostel Services',
-      description: 'Laundry service facility.',
-      coordinates: LatLng(12.9723688, 79.1593802),
-    ),
-    Location(
-      name: 'Waste Water Treatment Plant (West)',
-      category: 'Utilities',
-      description: 'West side waste water treatment facility.',
-      coordinates: LatLng(12.9721075, 79.1599542),
-    ),
-    Location(
-      name: 'Waste Water Treatment Plant (East)',
-      category: 'Utilities',
-      description: 'East side waste water treatment facility.',
-      coordinates: LatLng(12.9721231, 79.1605952),
-    ),
-    Location(
-      name: 'MH swimming pool',
-      category: 'Hostel Sports',
-      description: 'Men\'s Hostel swimming pool.',
-      coordinates: LatLng(12.9744546, 79.1608179),
-    ),
-    Location(
-      name: 'Park (Thiruvalluvar Statue)',
+      name: 'Main Gate Fountain',
       category: 'Landmark',
-      description: 'Park area featuring the Thiruvalluvar statue.',
-      coordinates: LatLng(12.9718408, 79.156816),
+      description: 'Fountain near the Main Gate.',
+      coordinates: LatLng(12.9686651, 79.1558826),
+    ),
+
+    // --- MEN'S HOSTEL (MH) ---
+    Location(
+      name: 'B Annexe (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'B Annexe, Men\'s Hostel',
+      coordinates: LatLng(12.974865, 79.1574544),
+      buildingGroup: 'MH-B-Annexe',
     ),
     Location(
-      name: 'MH volleyball court',
-      category: 'Hostel Sports',
-      description: 'Men\'s Hostel volleyball court.',
-      coordinates: LatLng(12.9717938, 79.1571406),
+      name: 'B Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'B Block, Men\'s Hostel',
+      coordinates: LatLng(12.9744651, 79.1574866),
+      buildingGroup: 'MH-B',
     ),
     Location(
-      name: 'MH basketball court',
-      category: 'Hostel Sports',
-      description: 'Men\'s Hostel basketball court.',
-      coordinates: LatLng(12.9717598, 79.1574034),
+      name: 'F Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'F Block, Men\'s Hostel',
+      coordinates: LatLng(12.9737489, 79.1581356),
+      buildingGroup: 'MH-F',
     ),
     Location(
-      name: 'MH TENNIS COURT',
-      category: 'Hostel Sports',
-      description: 'Men\'s Hostel tennis court.',
-      coordinates: LatLng(12.971718, 79.1577843),
+      name: 'A Hostel (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'A Hostel, Men\'s Hostel',
+      coordinates: LatLng(12.9729125, 79.1572076),
+      buildingGroup: 'MH-A',
     ),
     Location(
-      name: 'K BLOCK',
-      category: 'Academic Block',
-      description: 'Academic/Department Block K.',
-      coordinates: LatLng(12.9723296, 79.1615045),
+      name: 'C Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'C Block, Men\'s Hostel',
+      coordinates: LatLng(12.9728864, 79.1581142),
+      buildingGroup: 'MH-C',
     ),
     Location(
-      name: 'FOOD PARK (FOOD MALL + FOODCY)',
-      category: 'Food Courts',
-      description: 'Food park, mall, and Foodcy outlet.',
-      coordinates: LatLng(12.9723845, 79.1620812),
+      name: 'D Annexe (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'D Annexe, Men\'s Hostel',
+      coordinates: LatLng(12.9732471, 79.158715),
+      buildingGroup: 'MH-D-Annexe',
     ),
     Location(
-      name: 'MH NESCAFE',
+      name: 'D Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'D Block, Men\'s Hostel',
+      coordinates: LatLng(12.9728341, 79.1588384),
+      buildingGroup: 'MH-D',
+    ),
+    Location(
+      name: 'E Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'E Block, Men\'s Hostel',
+      coordinates: LatLng(12.972787, 79.1597557),
+      buildingGroup: 'MH-E',
+    ),
+    Location(
+      name: 'G Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'G Block, Men\'s Hostel',
+      coordinates: LatLng(12.9733908, 79.1602117),
+      buildingGroup: 'MH-G',
+    ),
+    Location(
+      name: 'H Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'H Block, Men\'s Hostel',
+      coordinates: LatLng(12.9722094, 79.1574597),
+      buildingGroup: 'MH-H',
+    ),
+    Location(
+      name: 'J Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'J Block, Men\'s Hostel',
+      coordinates: LatLng(12.9721885, 79.1581786),
+      buildingGroup: 'MH-J',
+    ),
+    Location(
+      name: 'K Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'K Block, Men\'s Hostel',
+      coordinates: LatLng(12.9725204, 79.1614214),
+      buildingGroup: 'MH-K',
+    ),
+    Location(
+      name: 'L Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'L Block, Men\'s Hostel',
+      coordinates: LatLng(12.9726955, 79.16269),
+      buildingGroup: 'MH-L',
+    ),
+    Location(
+      name: 'R Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'R Block, Men\'s Hostel',
+      coordinates: LatLng(12.9731869, 79.1635108),
+      buildingGroup: 'MH-R',
+    ),
+    Location(
+      name: 'M Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'M Block, Men\'s Hostel',
+      coordinates: LatLng(12.9727243, 79.16383),
+      buildingGroup: 'MH-M',
+    ),
+    Location(
+      name: 'Q Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'Q Block, Men\'s Hostel',
+      coordinates: LatLng(12.9738456, 79.1639855),
+      buildingGroup: 'MH-Q',
+    ),
+    Location(
+      name: 'P Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'P Block, Men\'s Hostel',
+      coordinates: LatLng(12.9738168, 79.1641894),
+      buildingGroup: 'MH-P',
+    ),
+    Location(
+      name: 'N Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'N Block, Men\'s Hostel',
+      coordinates: LatLng(12.9751002, 79.1638058),
+      buildingGroup: 'MH-N',
+    ),
+    Location(
+      name: 'T Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'T Block, Men\'s Hostel',
+      coordinates: LatLng(12.9747656, 79.1654634),
+      buildingGroup: 'MH-T',
+    ),
+    Location(
+      name: 'S Block (Men\'s Hostel)',
+      category: 'Men\'s Hostel',
+      description: 'S Block, Men\'s Hostel',
+      coordinates: LatLng(12.974154, 79.1653722),
+      buildingGroup: 'MH-S',
+    ),
+
+    // --- MEN'S HOSTEL (MH) AMENITIES ---
+    Location(
+      name: 'Enzo Shop (Men\'s Hostel)',
       category: 'Shop/Café',
-      description: 'Nescafe stall in the men\'s hostel area.',
-      coordinates: LatLng(12.9726851, 79.1620409),
+      description: 'Enzo Shop, Men\'s Hostel Area',
+      coordinates: LatLng(12.9725074, 79.1589296),
     ),
     Location(
-      name: 'L BLOCK',
-      category: 'Academic Block',
-      description: 'Academic/Department Block L.',
-      coordinates: LatLng(12.9725047, 79.1627812),
+      name: 'Main Chota Dhobi (Men\'s Hostel)',
+      category: 'Hostel Services',
+      description: 'Main laundry service, Men\'s Hostel',
+      coordinates: LatLng(12.9722878, 79.1588089),
     ),
     Location(
-      name: 'SJT (S.J.T. Block)',
-      category: 'Academic Block',
-      description: 'S.J.T. Academic Block.',
-      coordinates: LatLng(12.9709496, 79.1640177),
+      name: 'Men\'s Hostel Indoor Stadium',
+      category: 'Sports',
+      description: 'Indoor sports stadium in MH area.',
+      coordinates: LatLng(12.9722852, 79.1591173),
     ),
     Location(
-      name: 'TT (Technology Tower) East Side',
+      name: 'Bright Power Laundry (Men\'s Hostel)',
+      category: 'Hostel Services',
+      description: 'Bright Power Laundry, Men\'s Hostel',
+      coordinates: LatLng(12.9724185, 79.1593426),
+    ),
+    Location(
+      name: 'Waste Water Plant (Men\'s Hostel - West)',
+      category: 'Utilities',
+      description: 'Waste Water Treatment Plant, Men\'s Hostel',
+      coordinates: LatLng(12.9723087, 79.1600588),
+      buildingGroup: 'MH-WWP',
+    ),
+    Location(
+      name: 'Waste Water Plant (Men\'s Hostel - East)',
+      category: 'Utilities',
+      description: 'Waste Water Treatment Plant, Men\'s Hostel',
+      coordinates: LatLng(12.9723061, 79.1606033),
+      buildingGroup: 'MH-WWP',
+    ),
+    Location(
+      name: 'Food Park (Food Mall + Foodcy) (MH)',
+      category: 'Food Courts',
+      description: 'Food park, mall, and Foodcy outlet in MH area.',
+      coordinates: LatLng(12.9725988, 79.1620383),
+    ),
+    Location(
+      name: 'Nescafe (Near Foodpark, MH)',
+      category: 'Shop/Café',
+      description: 'Nescafe stall near the MH Foodpark.',
+      coordinates: LatLng(12.9726929, 79.1620356),
+    ),
+    Location(
+      name: 'Indian Bank (Men\'s Hostel)',
+      category: 'Services',
+      description: 'Indian Bank branch in MH area.',
+      coordinates: LatLng(12.9732392, 79.1642135),
+    ),
+    Location(
+      name: 'Chillout Plaza (Men\'s Hostel)',
+      category: 'Food Courts',
+      description: 'Chillout Plaza food area, Men\'s Hostel.',
+      coordinates: LatLng(12.9733699, 79.1645327),
+    ),
+    Location(
+      name: 'Helipad (Men\'s Hostel)',
+      category: 'Landmark',
+      description: 'Helipad near Men\'s Hostel.',
+      coordinates: LatLng(12.975751, 79.1608393),
+    ),
+    Location(
+      name: 'Outdoor Stadium (Men\'s Hostel)',
+      category: 'Sports',
+      description: 'Outdoor sports stadium, Men\'s Hostel.',
+      coordinates: LatLng(12.9759653, 79.1601688),
+    ),
+    Location(
+      name: 'Running Track (Men\'s Hostel)',
+      category: 'Sports',
+      description: 'Running track, Men\'s Hostel.',
+      coordinates: LatLng(12.9759392, 79.1607535),
+    ),
+    Location(
+      name: 'Swimming Pool (Men\'s Hostel)',
+      category: 'Sports',
+      description: 'Men\'s Hostel swimming pool.',
+      coordinates: LatLng(12.9739998, 79.1607267),
+    ),
+    Location(
+      name: 'Tiruvallur Statue',
+      category: 'Landmark',
+      description: 'Tiruvallur Statue Park',
+      coordinates: LatLng(12.9718409, 79.156875),
+    ),
+    Location(
+      name: 'Volleyball Court (Men\'s Hostel)',
+      category: 'Sports',
+      description: 'Men\'s Hostel volleyball court.',
+      coordinates: LatLng(12.9719611, 79.1571647),
+    ),
+    Location(
+      name: 'Basketball Court (Men\'s Hostel)',
+      category: 'Sports',
+      description: 'Men\'s Hostel basketball court.',
+      coordinates: LatLng(12.9718984, 79.1574168),
+    ),
+    Location(
+      name: 'Tennis Court (Men\'s Hostel)',
+      category: 'Sports',
+      description: 'Men\'s Hostel tennis court.',
+      coordinates: LatLng(12.9718774, 79.1577923),
+    ),
+
+    // --- WOMEN'S HOSTEL (WH) ---
+    Location(
+      name: 'M Block (Women\'s Hostel)',
+      category: 'Women\'s Hostel',
+      description: 'M Block, Women\'s Hostel',
+      coordinates: LatLng(12.9684273, 79.1584575),
+      buildingGroup: 'WH-M',
+    ),
+    Location(
+      name: 'N Block (Women\'s Hostel)',
+      category: 'Women\'s Hostel',
+      description: 'N Block, Women\'s Hostel',
+      coordinates: LatLng(12.9679829, 79.1584629),
+      buildingGroup: 'WH-N',
+    ),
+    Location(
+      name: 'G Block (Women\'s Hostel)',
+      category: 'Women\'s Hostel',
+      description: 'G Block, Women\'s Hostel',
+      coordinates: LatLng(12.9684063, 79.1598871),
+      buildingGroup: 'WH-G',
+    ),
+    Location(
+      name: 'J Block (Women\'s Hostel)',
+      category: 'Women\'s Hostel',
+      description: 'J Block, Women\'s Hostel',
+      coordinates: LatLng(12.9680535, 79.1596162),
+      buildingGroup: 'WH-J',
+    ),
+    Location(
+      name: 'Mother Teresa Block (Women\'s Hostel)',
+      category: 'Women\'s Hostel',
+      description: 'Mother Teresa Block, Women\'s Hostel',
+      coordinates: LatLng(12.9710776, 79.1606569),
+    ),
+    Location(
+      name: 'Jhasi Rani Block (Women\'s Hostel)',
+      category: 'Women\'s Hostel',
+      description: 'Jhasi Rani Block, Women\'s Hostel',
+      coordinates: LatLng(12.9712554, 79.1613275),
+    ),
+    Location(
+      name: 'Ida Scudder Block (Women\'s Hostel)',
+      category: 'Women\'s Hostel',
+      description: 'Ida Scudder Block, Women\'s Hostel',
+      coordinates: LatLng(12.9711822, 79.1620409),
+    ),
+    Location(
+      name: 'Suu Kyi Block (Women\'s Hostel)',
+      category: 'Women\'s Hostel',
+      description: 'Suu Kyi Block, Women\'s Hostel',
+      coordinates: LatLng(12.971339, 79.1628027),
+    ),
+
+    // --- WOMEN'S HOSTEL (WH) AMENITIES ---
+    Location(
+      name: 'VIT Women\'s Indoor Sports Room',
+      category: 'Sports',
+      description: 'Indoor sports room for Women\'s Hostel.',
+      coordinates: LatLng(12.9707169, 79.1606677),
+    ),
+    Location(
+      name: 'Swimming Pool (Women\'s Hostel)',
+      category: 'Sports',
+      description: 'Women\'s Hostel swimming pool.',
+      coordinates: LatLng(12.9706803, 79.1614079),
+    ),
+
+    // --- ACADEMIC & ADMIN BUILDINGS ---
+    Location(
+      name: 'Technology Tower (TT) - Main Gate',
       category: 'Academic Block',
-      description: 'Technology Tower entrance/east side.',
-      coordinates: LatLng(12.9706072, 79.1595545),
+      description: 'Main entrance of Technology Tower.',
+      coordinates: LatLng(12.9708685, 79.159466),
+      buildingGroup: 'TT',
+    ),
+    Location(
+      name: 'Technology Tower (TT) - West Gate',
+      category: 'Academic Block',
+      description: 'West entrance of Technology Tower.',
+      coordinates: LatLng(12.9705235, 79.1589081),
+      buildingGroup: 'TT',
+    ),
+    Location(
+      name: 'Technology Tower (TT) - East Gate',
+      category: 'Academic Block',
+      description: 'East entrance of Technology Tower.',
+      coordinates: LatLng(12.970696, 79.161098),
+      buildingGroup: 'TT',
+    ),
+    Location(
+      name: 'TT Fountain',
+      category: 'Landmark',
+      description: 'Fountain in front of Technology Tower.',
+      coordinates: LatLng(12.9708999, 79.1594392),
+    ),
+    Location(
+      name: 'SJT (Silver Jubilee Tower) - Front Gate',
+      category: 'Academic Block',
+      description: 'Silver Jubilee Tower (SJT) - Front Gate',
+      coordinates: LatLng(12.9713076, 79.1636234),
+      buildingGroup: 'SJT',
+    ),
+    Location(
+      name: 'SJT (Silver Jubilee Tower) - Back Gate',
+      category: 'Academic Block',
+      description: 'Silver Jubilee Tower (SJT) - Back Gate',
+      coordinates: LatLng(12.9705967, 79.1642404),
+      buildingGroup: 'SJT',
+    ),
+    Location(
+      name: 'Pearl Research Park - Front Gate',
+      category: 'Academic Block',
+      description: 'Pearl Research Park - Front Gate',
+      coordinates: LatLng(12.9712658, 79.1663217),
+      buildingGroup: 'PRP',
+    ),
+    Location(
+      name: 'Pearl Research Park - Back Gate',
+      category: 'Academic Block',
+      description: 'Pearl Research Park - Back Gate',
+      coordinates: LatLng(12.970696, 79.1661501),
+      buildingGroup: 'PRP',
+    ),
+    Location(
+      name: 'MGB (Mahatma Gandhi Block) - Gate',
+      category: 'Academic Block',
+      description: 'Mahatma Gandhi Block (MGB) Entrance',
+      coordinates: LatLng(12.9720656, 79.1683871),
+      buildingGroup: 'MGB',
+    ),
+    Location(
+      name: 'Anna Auditorium',
+      category: 'Auditorium',
+      description: 'Anna Auditorium',
+      coordinates: LatLng(12.9699563, 79.1554615),
+    ),
+    Location(
+      name: 'VIT University Estates Office & CTS',
+      category: 'Admin',
+      description: 'Estates Office and CTS.',
+      coordinates: LatLng(12.9702099, 79.1560784),
+    ),
+    Location(
+      name: 'GD Naidu Block',
+      category: 'Academic Block',
+      description: 'GD Naidu Block',
+      coordinates: LatLng(12.9696139, 79.154638),
+    ),
+    Location(
+      name: 'CDMM Building',
+      category: 'Academic Block',
+      description: 'CDMM Building',
+      coordinates: LatLng(12.9691225, 79.1552228),
+    ),
+    Location(
+      name: 'Main Building (MGR) - North Gate',
+      category: 'Admin',
+      description: 'Main Administrative Building (MGR Block)',
+      coordinates: LatLng(12.9695564, 79.1559309),
+      buildingGroup: 'MGR',
+    ),
+    Location(
+      name: 'Main Building (MGR) - South Gate',
+      category: 'Admin',
+      description: 'Main Administrative Building (MGR Block)',
+      coordinates: LatLng(12.9688951, 79.1559228),
+      buildingGroup: 'MGR',
+    ),
+    Location(
+      name: 'EV Periyar Library',
+      category: 'Admin',
+      description: 'Main Central Library',
+      coordinates: LatLng(12.9691251, 79.1568562),
+    ),
+    Location(
+      name: 'SMV Block - North Gate',
+      category: 'Academic Block',
+      description: 'SMV Block',
+      coordinates: LatLng(12.9696296, 79.157728),
+      buildingGroup: 'SMV',
+    ),
+    Location(
+      name: 'SMV Block - South Gate',
+      category: 'Academic Block',
+      description: 'SMV Block',
+      coordinates: LatLng(12.9688585, 79.1577253),
+      buildingGroup: 'SMV',
+    ),
+    Location(
+      name: 'Centre for Biomechanical Research',
+      category: 'Academic Block',
+      description: 'Centre for Biomechanical Research',
+      coordinates: LatLng(12.9683384, 79.1602036),
+    ),
+
+    // --- FOOD & SHOPS (ACADEMIC AREA) ---
+    Location(
+      name: 'Canteen (Near Gate 2)',
+      category: 'Food Courts',
+      description: 'Canteen near Gate 2.',
+      coordinates: LatLng(12.9704712, 79.1544503),
+    ),
+    Location(
+      name: 'Souvenir Shop',
+      category: 'Shop/Café',
+      description: 'VIT Souvenir Shop.',
+      coordinates: LatLng(12.9704268, 79.1553274),
+    ),
+    Location(
+      name: 'Woody\'s',
+      category: 'Food Courts',
+      description: 'Woody\'s Restaurant near SMV.',
+      coordinates: LatLng(12.9698256, 79.1576689),
+    ),
+    Location(
+      name: 'Amul Shop',
+      category: 'Shop/Café',
+      description: 'Amul Parlour.',
+      coordinates: LatLng(12.9695486, 79.1580364),
+    ),
+    Location(
+      name: 'Greenos',
+      category: 'Food Courts',
+      description: 'Greenos Restaurant.',
+      coordinates: LatLng(12.9696401, 79.1582778),
+    ),
+    Location(
+      name: 'Samsung Shop',
+      category: 'Shop/Café',
+      description: 'Samsung Store.',
+      coordinates: LatLng(12.9693369, 79.1581437),
+    ),
+    Location(
+      name: 'Foodys',
+      category: 'Food Courts',
+      description: 'Foodys Restaurant.',
+      coordinates: LatLng(12.9690467, 79.1582215),
+    ),
+    Location(
+      name: 'Lassi House (Near SJT)',
+      category: 'Shop/Café',
+      description: 'Lassi House near SJT.',
+      coordinates: LatLng(12.9716683, 79.1644174),
+    ),
+
+    // --- SERVICES & UTILITIES ---
+    Location(
+      name: 'Atm (near SJT)',
+      category: 'Services',
+      description: 'ATM located near SJT building.',
+      coordinates: LatLng(12.9716161, 79.1631567),
+    ),
+    Location(
+      name: 'Central Store',
+      category: 'Services',
+      description: 'Central Store.',
+      coordinates: LatLng(12.9704451, 79.155027),
+    ),
+    Location(
+      name: 'Health Centre',
+      category: 'Services',
+      description: 'Main Health Centre.',
+      coordinates: LatLng(12.9695799, 79.1546434),
+    ),
+    Location(
+      name: 'HDFC Bank',
+      category: 'Services',
+      description: 'HDFC Bank Branch.',
+      coordinates: LatLng(12.9697472, 79.1552094),
+    ),
+    Location(
+      name: 'Car Parking',
+      category: 'Parking',
+      description: 'Main car parking area.',
+      coordinates: LatLng(12.9687226, 79.1552281),
+    ),
+    Location(
+      name: 'VIT Guest House',
+      category: 'Admin',
+      description: 'VIT Guest House',
+      coordinates: LatLng(12.9676274, 79.1587311),
+    ),
+    Location(
+      name: 'Waste Water Plant (Academic Area)',
+      category: 'Utilities',
+      description: 'Waste Water Treatment Plant',
+      coordinates: LatLng(12.9704869, 79.1620141),
+    ),
+    Location(
+      name: 'Motorcycle Parking (Near SJT)',
+      category: 'Parking',
+      description: 'Motorcycle parking near SJT.',
+      coordinates: LatLng(12.9712188, 79.1647875),
+    ),
+
+    // --- SPORTS & RECREATION (ACADEMIC AREA) ---
+    Location(
+      name: 'Anna Auditorium Volleyball Court',
+      category: 'Sports',
+      description: 'Volleyball court near Anna Auditorium.',
+      coordinates: LatLng(12.9702961, 79.1555715), // Corrected longitude
+    ),
+    Location(
+      name: 'Anna Auditorium Basketball Court',
+      category: 'Sports',
+      description: 'Basketball court near Anna Auditorium.',
+      coordinates: LatLng(12.970304, 79.1559389),
+    ),
+    Location(
+      name: 'Anna Auditorium Tennis Court',
+      category: 'Sports',
+      description: 'Tennis court near Anna Auditorium.',
+      coordinates: LatLng(12.9703066, 79.1561535),
+    ),
+    Location(
+      name: 'Basketball Court (Near MGR)',
+      category: 'Sports',
+      description: 'Basketball court near Main Building.',
+      coordinates: LatLng(12.9698779, 79.1561267),
+    ),
+    Location(
+      name: 'Kalpana Chawla Ground',
+      category: 'Sports',
+      description: 'Kalpana Chawla Ground.',
+      coordinates: LatLng(12.9684874, 79.1563681),
+    ),
+    Location(
+      name: 'TT Basketball & Volleyball Court',
+      category: 'Sports',
+      description: 'Courts near Technology Tower.',
+      coordinates: LatLng(12.9702203, 79.1585702),
+    ),
+    Location(
+      name: 'VIT Lake',
+      category: 'Landmark',
+      description: 'Lake near the hostels.',
+      coordinates: LatLng(12.9699642, 79.162116),
+    ),
+    Location(
+      name: 'SJT Ground',
+      category: 'Sports',
+      description: 'Ground in front of SJT.',
+      coordinates: LatLng(12.9704085, 79.1632372),
     ),
   ];
 
@@ -938,11 +1360,58 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  // =========================================================================
+  // === MODIFIED TO INCLUDE "CLOSEST GATE" LOGIC ===
+  // =========================================================================
   void _setDestinationFromDirectory(Location location) {
     if (!mounted) return; // Added mounted check
+
+    Location finalDestination = location;
+
+    // --- NEW: Closest Gate Logic ---
+    // Check if the selected location is part of a group and if we have the user's location
+    if (location.buildingGroup != null && _currentPosition != null) {
+      final String groupName = location.buildingGroup!;
+      final userLocation = LatLng(
+        _currentPosition!.latitude,
+        _currentPosition!.longitude,
+      );
+
+      // Find all locations in that group
+      final List<Location> groupLocations = _allLocations
+          .where((loc) => loc.buildingGroup == groupName)
+          .toList();
+
+      if (groupLocations.isNotEmpty) {
+        Location closestLocation = groupLocations[0];
+        double minDistance = double.infinity;
+
+        for (final loc in groupLocations) {
+          final distance = Geolocator.distanceBetween(
+            userLocation.latitude,
+            userLocation.longitude,
+            loc.coordinates.latitude,
+            loc.coordinates.longitude,
+          );
+
+          if (distance < minDistance) {
+            minDistance = distance;
+            closestLocation = loc;
+          }
+        }
+        // The closest entry point is now our destination
+        debugPrint(
+          "Found closest entry for group $groupName: ${closestLocation.name}",
+        );
+        finalDestination = closestLocation;
+      }
+    }
+    // --- END: Closest Gate Logic ---
+
     setState(() {
       _selectedIndex = 0;
-      _selectedLocation = location;
+      _selectedLocation =
+          finalDestination; // Use the (potentially new) final destination
       _tappedDestination = null;
       _fullRouteCoordinates = [];
       _remainingRouteCoordinates = [];
@@ -1560,7 +2029,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 initialCenter: campusCenter,
                 initialZoom: 16.0,
                 minZoom: 10.0,
-                maxZoom: 19.0,
+                maxZoom: 18.0,
                 interactionOptions: const InteractionOptions(
                   flags: InteractiveFlag.all,
                   enableMultiFingerGestureRace: true,
@@ -2275,6 +2744,18 @@ class DirectoryScreen extends StatelessWidget {
       }
       groupedLocations[loc.category]!.add(loc);
     }
+
+    // --- NEW: Sort categories for better organization ---
+    final sortedKeys = groupedLocations.keys.toList()
+      ..sort((a, b) {
+        // Prioritize Hostels and Academic Blocks
+        if (a.contains('Hostel') && !b.contains('Hostel')) return -1;
+        if (!a.contains('Hostel') && b.contains('Hostel')) return 1;
+        if (a.contains('Academic') && !b.contains('Academic')) return -1;
+        if (!a.contains('Academic') && b.contains('Academic')) return 1;
+        return a.compareTo(b); // Alphabetical fallback
+      });
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0),
       child: Column(
@@ -2295,21 +2776,26 @@ class DirectoryScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          ...groupedLocations.entries.map((entry) {
+          // --- MODIFIED: Use sortedKeys to build the list ---
+          ...sortedKeys.map((key) {
+            final entry = groupedLocations[key]!;
+            // Sort locations alphabetically within each category
+            entry.sort((a, b) => a.name.compareTo(b.name));
+
             return Padding(
               padding: const EdgeInsets.only(bottom: 20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    entry.key,
+                    key, // The category name (e.g., "Men's Hostel")
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.bold,
                       color: Colors.blue[800],
                     ),
                   ),
                   const Divider(),
-                  ...entry.value.map((location) {
+                  ...entry.map((location) {
                     return Card(
                       margin: const EdgeInsets.symmetric(vertical: 8),
                       elevation: 1,
