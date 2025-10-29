@@ -8,13 +8,12 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_location_marker/flutter_map_location_marker.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
 import 'package:http/http.dart' as http;
-import 'package:latlong2/latlong.dart' as latlong;
+// *** FIX: Removed google_maps_flutter and use latlong2 directly ***
+import 'package:latlong2/latlong.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // Ensure you run 'flutter run' on a device/emulator, as the map relies on real GPS.
   runApp(const VitNavigationApp());
 }
 
@@ -23,8 +22,7 @@ class Location {
   final String name;
   final String category;
   final String description;
-  final LatLng coordinates;
-  // NEW: Used to group multiple entry points (gates) to one building
+  final LatLng coordinates; // <-- This is now from latlong2
   final String? buildingGroup;
 
   const Location({
@@ -32,7 +30,7 @@ class Location {
     required this.category,
     required this.description,
     required this.coordinates,
-    this.buildingGroup, // Added to constructor
+    this.buildingGroup,
   });
 }
 
@@ -40,7 +38,7 @@ class Location {
 class RouteStep {
   final String instruction;
   final double distance;
-  final LatLng location;
+  final LatLng location; // <-- This is now from latlong2
   final String maneuverType;
   final String maneuverModifier;
 
@@ -82,26 +80,26 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _selectedIndex = 0;
   Location? _selectedLocation;
-  LatLng? _tappedDestination;
+  LatLng? _tappedDestination; // <-- This is now from latlong2
 
   final MapController _mapController = MapController();
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
 
-  double _sheetPosition = 0.2; // Default initial size
+  double _sheetPosition = 0.2;
 
   late final AnimationController _rotationAnimationController;
 
   bool _isFollowingUser = false;
 
-  List<LatLng> _fullRouteCoordinates = [];
-  List<LatLng> _remainingRouteCoordinates = [];
+  List<LatLng> _fullRouteCoordinates = []; // <-- This is now from latlong2
+  List<LatLng> _remainingRouteCoordinates = []; // <-- This is now from latlong2
 
   String _selectedProfile = '';
   bool _isRouting = false;
 
-  List<LatLng> _cachedWalkRoute = [];
-  List<LatLng> _cachedBikeRoute = [];
+  List<LatLng> _cachedWalkRoute = []; // <-- This is now from latlong2
+  List<LatLng> _cachedBikeRoute = []; // <-- This is now from latlong2
   List<RouteStep> _cachedWalkSteps = [];
   List<RouteStep> _cachedBikeSteps = [];
 
@@ -117,31 +115,37 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   final FlutterTts _flutterTts = FlutterTts();
 
-  // Search controller and results
   final TextEditingController _searchController = TextEditingController();
   List<Location> _searchResults = [];
   bool _isSearchActive = false;
 
-  // --- Night Mode State ---
-  bool _isNightMode = false;
+  // --- PERFORMANCE FIX: TileProvider created once ---
+  final CachedTileProvider _tileProvider = CachedTileProvider();
+
+  // // --- NETWORKING: OSRM Configuration Constants ---
+  // static const String _osrmWalkBaseUrl =
+  //     'https://walk-osrm-nav.trycloudflare.com';
+  // static const String _osrmBikeBaseUrl =
+  //     'https://bike-osrm-nav.trycloudflare.com';
+
+  // // --- NETWORKING: Use the computer's local IP on the phone's hotspot network ---
+  // static const String _osrmWalkBaseUrl = 'http://10.62.20.12:8999';
+  // static const String _osrmBikeBaseUrl = 'http://10.62.20.12:5001';
 
   // --- OSRM Configuration Constants ---
-  // Use 127.0.0.1 for local Docker access
-  static const String _osrmHost = '127.0.0.1';
-  // Port 6000 used for walk profile due to conflict on 5000
-  static const int _walkPort = 8999;
-  // Port 5001 assumed for bike profile
-  static const int _bikePort = 5001;
+  // Use the Tailscale Private IP
+  static const String _osrmWalkBaseUrl = 'http://100.81.0.57:8999';
+  static const String _osrmBikeBaseUrl = 'http://100.81.0.57:5001';
 
   // =========================================================================
-  // === ALL CAMPUS LOCATIONS (COMPLETELY OVERHAULED) ===
+  // === ALL CAMPUS LOCATIONS ===
   // =========================================================================
   final List<Location> _allLocations = const [
     // --- GATES & ENTRANCES ---
     Location(
       name: 'Main Gate',
       category: 'Entrance',
-      description: 'The primary entrance and exit of the campus.',
+      description: 'The primary entrance...',
       coordinates: LatLng(12.9682391, 79.1558826),
     ),
     Location(
@@ -162,7 +166,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       description: 'Fountain near the Main Gate.',
       coordinates: LatLng(12.9686651, 79.1558826),
     ),
-
     // --- MEN'S HOSTEL (MH) ---
     Location(
       name: 'B Annexe (Men\'s Hostel)',
@@ -304,8 +307,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       coordinates: LatLng(12.974154, 79.1653722),
       buildingGroup: 'MH-S',
     ),
-
-    // --- MEN'S HOSTEL (MH) AMENITIES ---
+    // --- (MH Amenities) ---
     Location(
       name: 'Enzo Shop (Men\'s Hostel)',
       category: 'Shop/Café',
@@ -416,7 +418,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       description: 'Men\'s Hostel tennis court.',
       coordinates: LatLng(12.9718774, 79.1577923),
     ),
-
     // --- WOMEN'S HOSTEL (WH) ---
     Location(
       name: 'M Block (Women\'s Hostel)',
@@ -470,8 +471,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       description: 'Suu Kyi Block, Women\'s Hostel',
       coordinates: LatLng(12.971339, 79.1628027),
     ),
-
-    // --- WOMEN'S HOSTEL (WH) AMENITIES ---
+    // --- (WH Amenities) ---
     Location(
       name: 'VIT Women\'s Indoor Sports Room',
       category: 'Sports',
@@ -484,7 +484,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       description: 'Women\'s Hostel swimming pool.',
       coordinates: LatLng(12.9706803, 79.1614079),
     ),
-
     // --- ACADEMIC & ADMIN BUILDINGS ---
     Location(
       name: 'Technology Tower (TT) - Main Gate',
@@ -612,8 +611,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       description: 'Centre for Biomechanical Research',
       coordinates: LatLng(12.9683384, 79.1602036),
     ),
-
-    // --- FOOD & SHOPS (ACADEMIC AREA) ---
+    // --- (Food & Shops - Academic Area) ---
     Location(
       name: 'Canteen (Near Gate 2)',
       category: 'Food Courts',
@@ -662,8 +660,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       description: 'Lassi House near SJT.',
       coordinates: LatLng(12.9716683, 79.1644174),
     ),
-
-    // --- SERVICES & UTILITIES ---
+    // --- (Services & Utilities) ---
     Location(
       name: 'Atm (near SJT)',
       category: 'Services',
@@ -712,13 +709,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       description: 'Motorcycle parking near SJT.',
       coordinates: LatLng(12.9712188, 79.1647875),
     ),
-
-    // --- SPORTS & RECREATION (ACADEMIC AREA) ---
+    // --- (Sports & Recreation - Academic Area) ---
     Location(
       name: 'Anna Auditorium Volleyball Court',
       category: 'Sports',
       description: 'Volleyball court near Anna Auditorium.',
-      coordinates: LatLng(12.9702961, 79.1555715), // Corrected longitude
+      coordinates: LatLng(12.9702961, 79.1555715),
     ),
     Location(
       name: 'Anna Auditorium Basketball Court',
@@ -768,9 +764,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   StreamSubscription<Position>? _positionStreamSubscription;
   bool _isLocationServiceEnabled = false;
 
-  // --- Rerouting State ---
   bool _isRerouting = false;
-  static const double _rerouteThreshold = 30.0; // 30 meters
+  static const double _rerouteThreshold = 30.0;
 
   LatLng? get _finalDestinationCoordinates {
     return _selectedLocation?.coordinates ?? _tappedDestination;
@@ -793,13 +788,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         : (_selectedProfile == 'bike' ? _bikeDistance : '---');
   }
 
-  latlong.LatLng _toFlutterMapLatLng(LatLng gLatLng) {
-    return latlong.LatLng(gLatLng.latitude, gLatLng.longitude);
-  }
-
-  LatLng _toGoogleLatLng(latlong.LatLng flLatLng) {
-    return LatLng(flLatLng.latitude, flLatLng.longitude);
-  }
+  // --- *** REMOVED: All LatLng conversion functions *** ---
 
   @override
   void initState() {
@@ -812,16 +801,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 500),
     );
 
-    // Listen to search controller
     _searchController.addListener(_onSearchChanged);
-
-    // Listen to sheet controller
     _sheetController.addListener(_onSheetMoved);
   }
 
-  // Corrected listener
   void _onSheetMoved() {
-    // The 'mounted' check is all we need here.
     if (mounted) {
       setState(() {
         _sheetPosition = _sheetController.size;
@@ -834,18 +818,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _positionStreamSubscription?.cancel();
     _flutterTts.stop();
     _rotationAnimationController.dispose();
-
-    // Dispose search controller
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
-
-    // Dispose sheet controller listener
     _sheetController.removeListener(_onSheetMoved);
-
     super.dispose();
   }
 
-  // Search logic
   void _onSearchChanged() {
     final query = _searchController.text.toLowerCase();
     if (query.isEmpty) {
@@ -869,32 +847,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  // Clear search
   void _clearSearch() {
     _searchController.clear();
-    FocusScope.of(context).unfocus(); // Hide keyboard
+    FocusScope.of(context).unfocus();
     setState(() {
       _isSearchActive = false;
       _searchResults = [];
     });
   }
 
-  // Handle tapping a search result
   void _onSearchResultTapped(Location location) {
-    _clearSearch(); // Clears text, sets _isSearchActive=false, attempts unfocus
-
-    // Add direct unfocus attempt
+    _clearSearch();
     FocusManager.instance.primaryFocus?.unfocus();
-
-    _setDestinationFromDirectory(location); // Use existing method
-  }
-
-  // --- Toggle Night Mode ---
-  void _toggleNightMode() {
-    if (!mounted) return;
-    setState(() {
-      _isNightMode = !_isNightMode;
-    });
+    _setDestinationFromDirectory(location);
   }
 
   Future<void> _initTts() async {
@@ -910,10 +875,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     await _flutterTts.speak(text);
   }
 
-  // Helper method for smooth rotation
   void _animateRotationTo(double targetRotation) {
     final currentRotation = _mapController.camera.rotation;
-    // Normalize rotations to be between -180 and 180 to find shortest path
     double normalize(double angle) {
       while (angle <= -180) angle += 360;
       while (angle > 180) angle -= 360;
@@ -922,17 +885,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     final currentNormalized = normalize(currentRotation);
     final targetNormalized = normalize(targetRotation);
-
-    // Calculate the difference, ensuring it takes the shortest path
     double diff = targetNormalized - currentNormalized;
     if (diff > 180) diff -= 360;
     if (diff < -180) diff += 360;
-
-    final finalRotation =
-        currentRotation + diff; // Target rotation via shortest path
-
+    final finalRotation = currentRotation + diff;
     final tween = Tween<double>(begin: currentRotation, end: finalRotation);
-
     final animation = tween.animate(
       CurvedAnimation(
         parent: _rotationAnimationController,
@@ -940,22 +897,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       ),
     );
     _rotationAnimationController.stop();
-    // Remove potential old listener before adding new one
-    animation.removeListener(() {}); // No-op remove just in case
+    animation.removeListener(() {});
     animation.addListener(() {
       if (mounted) {
         _mapController.rotate(animation.value);
       }
     });
-
-    // Clean up listener when animation completes or is dismissed
     animation.addStatusListener((status) {
       if (status == AnimationStatus.completed ||
           status == AnimationStatus.dismissed) {
-        animation.removeListener(() {}); // Clean up listener
+        animation.removeListener(() {});
       }
     });
-
     _rotationAnimationController.reset();
     _rotationAnimationController.forward();
   }
@@ -975,19 +928,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     _isLocationServiceEnabled = await Geolocator.isLocationServiceEnabled();
     if (mounted) {
-      setState(() {}); // Update UI if service became enabled
+      setState(() {});
     }
-
     if (!_isLocationServiceEnabled) return;
 
     const locationSettings = LocationSettings(
       accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 0, // Keep at 0 for frequent updates
+      distanceFilter: 0,
     );
 
     _positionStreamSubscription?.cancel();
     _positionStreamSubscription =
-        // --- MODIFIED: Made the listener async ---
         Geolocator.getPositionStream(locationSettings: locationSettings).listen(
           (Position position) async {
             if (!mounted) return;
@@ -1000,20 +951,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               "New Position: ${position.latitude}, ${position.longitude}, Heading: ${position.heading}",
             );
 
-            // --- MODIFIED: Reworked all navigation logic ---
             if (_isRouting && _activeSteps.isNotEmpty) {
+              // --- *** REFACTORED: Use latlong.LatLng directly *** ---
               final userLocation = LatLng(
                 position.latitude,
                 position.longitude,
               );
 
-              // --- NEW REROUTING & PATH SNAPPING LOGIC ---
-
-              // 1. Find closest point on the *original* full route
               int closestPointIndex = -1;
               double minDistance = double.infinity;
-
-              if (_fullRouteCoordinates.isEmpty) return; // No route to check
+              if (_fullRouteCoordinates.isEmpty) return;
 
               for (int i = 0; i < _fullRouteCoordinates.length; i++) {
                 final point = _fullRouteCoordinates[i];
@@ -1023,74 +970,54 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   point.latitude,
                   point.longitude,
                 );
-
                 if (distance < minDistance) {
                   minDistance = distance;
                   closestPointIndex = i;
                 }
               }
+              if (closestPointIndex == -1) return;
 
-              if (closestPointIndex == -1) return; // Should not happen
-
-              // 2. Check for deviation (Rerouting)
               if (minDistance > _rerouteThreshold && !_isRerouting) {
-                // --- USER IS OFF-ROUTE ---
                 if (mounted) {
                   setState(() {
-                    _isRerouting = true; // Set flag to prevent spam
-                    // Hide the old bad line while we recalculate
+                    _isRerouting = true;
                     _remainingRouteCoordinates = [];
                   });
                 }
-
-                // Fetch a new route from the user's current (off-route) position
                 final bool routeFound = await _fetchRouteDetails(
                   _selectedProfile,
                 );
-
                 if (routeFound && mounted) {
                   setState(() {
-                    // Get the newly cached route
                     final newRoute = _selectedProfile == 'walk'
                         ? _cachedWalkRoute
                         : _cachedBikeRoute;
                     final newSteps = _selectedProfile == 'walk'
                         ? _cachedWalkSteps
                         : _cachedBikeSteps;
-
                     _fullRouteCoordinates = newRoute;
-                    _remainingRouteCoordinates = List.from(
-                      newRoute,
-                    ); // Use full new route
+                    _remainingRouteCoordinates = List.from(newRoute);
                     _activeSteps = newSteps;
-                    _currentStepIndex =
-                        0; // Reset to the start of the new route
-                    _isRerouting = false; // Rerouting complete
+                    _currentStepIndex = 0;
+                    _isRerouting = false;
                   });
-                  // Announce the new first step
                   _speak(
                     "Rerouting. ${_activeSteps.isNotEmpty ? _activeSteps[0].instruction : ''}",
                   );
                 } else if (mounted) {
-                  // Failed to find a new route, just reset reroute flag
                   setState(() {
                     _isRerouting = false;
                   });
                 }
               } else if (!_isRerouting) {
-                // --- USER IS ON-ROUTE (CONTINUOUS PATH SHORTENING) ---
-
-                // The remaining route is just the sub-list from the closest point.
                 final List<LatLng> newRemainingPoints = _fullRouteCoordinates
                     .sublist(closestPointIndex);
-
                 if (mounted) {
                   setState(() {
                     _remainingRouteCoordinates = newRemainingPoints;
                   });
                 }
 
-                // --- Original step-checking logic (can now run) ---
                 if (_currentStepIndex >= _activeSteps.length - 1) {
                   final destination = _finalDestinationCoordinates!;
                   final distanceToDestination = Geolocator.distanceBetween(
@@ -1120,7 +1047,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   }
                 }
               }
-              // --- END NEW LOGIC ---
             } else if (_finalDestinationCoordinates != null &&
                 !_isModalLoading) {
               _fetchRouteSummary('walk', fireStateUpdate: true);
@@ -1138,7 +1064,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         );
   }
 
-  // --- MODIFIED: Route Summary Fetch to use Custom OSRM Server ---
+  // --- *** NETWORKING FIX: Route Summary Fetch *** ---
   Future<bool> _fetchRouteSummary(
     String profile, {
     bool fireStateUpdate = false,
@@ -1156,17 +1082,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       });
     }
 
+    // --- *** REFACTORED: Use latlong.LatLng directly *** ---
     final start = LatLng(
       _currentPosition!.latitude,
       _currentPosition!.longitude,
     );
     final end = destination;
 
-    // Use the custom OSRM configuration
-    final int port = profile == 'walk' ? _walkPort : _bikePort;
+    // Select the correct base URL based on profile
+    final String baseUrl = profile == 'walk'
+        ? _osrmWalkBaseUrl
+        : _osrmBikeBaseUrl;
 
+    // Construct the full URL
     final url = Uri.parse(
-      'http://$_osrmHost:$port/route/v1/$profile/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=false&geometries=geojson',
+      '$baseUrl/route/v1/$profile/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=false&geometries=geojson',
     );
 
     try {
@@ -1198,6 +1128,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           }
           return true;
         }
+      } else {
+        debugPrint(
+          'Route summary fetch failed for $profile with status: ${response.statusCode}',
+        );
       }
     } catch (e) {
       debugPrint('Route summary fetch failed for $profile: $e');
@@ -1205,12 +1139,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return false;
   }
 
-  // --- MODIFIED: Route Details Fetch to use Custom OSRM Server ---
+  // --- *** NETWORKING FIX: Route Details Fetch *** ---
   Future<bool> _fetchRouteDetails(String profile) async {
     final destination = _finalDestinationCoordinates;
     if (_currentPosition == null || destination == null) return false;
 
-    // Don't reset state if we are rerouting (it's handled in the listener)
     if (mounted && !_isRerouting) {
       setState(() {
         if (profile == 'walk') {
@@ -1225,17 +1158,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       });
     }
 
+    // --- *** REFACTORED: Use latlong.LatLng directly *** ---
     final start = LatLng(
       _currentPosition!.latitude,
       _currentPosition!.longitude,
     );
     final end = destination;
 
-    // Use the custom OSRM configuration
-    final int port = profile == 'walk' ? _walkPort : _bikePort;
+    // Select the correct base URL based on profile
+    final String baseUrl = profile == 'walk'
+        ? _osrmWalkBaseUrl
+        : _osrmBikeBaseUrl;
 
+    // Construct the full URL
     final url = Uri.parse(
-      'http://$_osrmHost:$port/route/v1/$profile/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson&steps=true',
+      '$baseUrl/route/v1/$profile/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson&steps=true',
     );
 
     try {
@@ -1253,6 +1190,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           List<LatLng> points = [];
           if (geometry != null && geometry['coordinates'] != null) {
             for (var coord in geometry['coordinates']) {
+              // --- *** REFACTORED: Use latlong.LatLng directly *** ---
               points.add(LatLng(coord[1], coord[0]));
             }
           }
@@ -1267,6 +1205,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   RouteStep(
                     instruction: maneuver['instruction'] ?? '',
                     distance: (step['distance'] as num).toDouble(),
+                    // --- *** REFACTORED: Use latlong.LatLng directly *** ---
                     location: LatLng(
                       maneuver['location'][1],
                       maneuver['location'][0],
@@ -1279,7 +1218,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             }
           }
 
-          // We must have at least a start and end point to be valid
           if (points.length < 2) {
             debugPrint(
               'Route details fetch failed for $profile: Too few points',
@@ -1309,12 +1247,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           }
           return true;
         }
+      } else {
+        debugPrint(
+          'Route details fetch failed for $profile with status: ${response.statusCode}',
+        );
       }
     } catch (e) {
       debugPrint('Route details fetch failed for $profile: $e');
     }
     return false;
   }
+  // --- *** END NETWORKING FIX *** ---
 
   String _formatDuration(int seconds) {
     if (seconds < 60) return '$seconds sec';
@@ -1326,7 +1269,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _resetNavigationState() {
-    if (!mounted) return; // Added mounted check
+    if (!mounted) return;
     setState(() {
       _selectedLocation = null;
       _tappedDestination = null;
@@ -1344,15 +1287,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _activeSteps = [];
       _currentStepIndex = 0;
       _selectedIndex = 0;
-      _isFollowingUser = false; // Stop following
-      _isRerouting = false; // --- NEW: Reset reroute flag
+      _isFollowingUser = false;
+      _isRerouting = false;
     });
     _flutterTts.stop();
-
     if (mounted && _mapController.camera.rotation != 0) {
-      _animateRotationTo(0); // Use smooth animation
+      _animateRotationTo(0);
     }
-
     _sheetController.animateTo(
       0.2,
       duration: const Duration(milliseconds: 300),
@@ -1360,24 +1301,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // =========================================================================
-  // === MODIFIED TO INCLUDE "CLOSEST GATE" LOGIC ===
-  // =========================================================================
   void _setDestinationFromDirectory(Location location) {
-    if (!mounted) return; // Added mounted check
+    if (!mounted) return;
 
     Location finalDestination = location;
 
-    // --- NEW: Closest Gate Logic ---
-    // Check if the selected location is part of a group and if we have the user's location
     if (location.buildingGroup != null && _currentPosition != null) {
       final String groupName = location.buildingGroup!;
+      // --- *** REFACTORED: Use latlong.LatLng directly *** ---
       final userLocation = LatLng(
         _currentPosition!.latitude,
         _currentPosition!.longitude,
       );
 
-      // Find all locations in that group
       final List<Location> groupLocations = _allLocations
           .where((loc) => loc.buildingGroup == groupName)
           .toList();
@@ -1393,25 +1329,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             loc.coordinates.latitude,
             loc.coordinates.longitude,
           );
-
           if (distance < minDistance) {
             minDistance = distance;
             closestLocation = loc;
           }
         }
-        // The closest entry point is now our destination
         debugPrint(
           "Found closest entry for group $groupName: ${closestLocation.name}",
         );
         finalDestination = closestLocation;
       }
     }
-    // --- END: Closest Gate Logic ---
 
     setState(() {
       _selectedIndex = 0;
-      _selectedLocation =
-          finalDestination; // Use the (potentially new) final destination
+      _selectedLocation = finalDestination;
       _tappedDestination = null;
       _fullRouteCoordinates = [];
       _remainingRouteCoordinates = [];
@@ -1435,7 +1367,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _onItemTapped(int index) {
-    if (!mounted) return; // Added mounted check
+    if (!mounted) return;
     setState(() {
       _selectedIndex = index;
     });
@@ -1454,11 +1386,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  void _onMapLongPress(TapPosition tapPosition, latlong.LatLng point) {
-    if (!mounted) return; // Added mounted check
+  void _onMapLongPress(TapPosition tapPosition, LatLng point) {
+    // <-- This is now from latlong2
+    if (!mounted) return;
     setState(() {
       _selectedLocation = null;
-      _tappedDestination = _toGoogleLatLng(point); // Convert
+      // --- *** REFACTORED: Use latlong.LatLng directly *** ---
+      _tappedDestination = point;
       _fullRouteCoordinates = [];
       _remainingRouteCoordinates = [];
       _selectedProfile = '';
@@ -1482,32 +1416,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   void _centerMapOnUser() {
     if (!mounted) return;
-
     if (_isFollowingUser) {
-      // --- IS CURRENTLY FOLLOWING ---
-      // Turn OFF following mode and rotate to North.
       setState(() {
         _isFollowingUser = false;
       });
-
-      _animateRotationTo(0); // Use smooth animation
+      _animateRotationTo(0);
     } else {
-      // --- IS NOT CURRENTLY FOLLOWING ---
-      // Turn ON following mode and move to the user's location.
-      // The CurrentLocationLayer will handle the rotation to the user's heading.
       setState(() {
         _isFollowingUser = true;
       });
-
       if (_currentPosition != null) {
+        // --- *** REFACTORED: Use latlong.LatLng directly *** ---
         _mapController.move(
-          _toFlutterMapLatLng(
-            LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-          ),
-          18.0, // Zoom in a bit
+          LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+          18.0,
         );
       } else {
-        // If we don't have a position, just show a message.
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Fetching your location...')),
         );
@@ -1518,45 +1442,38 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Future<void> _startNavigation({
     required String profile,
-    required List<LatLng> route,
+    required List<LatLng> route, // This is now List<latlong.LatLng>
     required List<RouteStep> steps,
   }) async {
-    if (!mounted) return; // Added mounted check
-
-    _clearSearch(); // Clear search/dismiss keyboard
-
-    // 1. Animate the main sheet down
+    if (!mounted) return;
+    _clearSearch();
     await _sheetController.animateTo(
       0.0,
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeOut,
     );
-    if (!mounted) return; // Check again after await
+    if (!mounted) return;
 
-    // 2. Set state for navigation & start following
     setState(() {
       _selectedProfile = profile;
       _fullRouteCoordinates = route;
-      _remainingRouteCoordinates = List.from(route); // Start with a full copy
+      _remainingRouteCoordinates = List.from(route);
       _activeSteps = steps;
       _currentStepIndex = 0;
-      _isRouting = true; // This will hide the search bar AND hide the bottom UI
-      _isFollowingUser = true; // This now controls the map
-      _isRerouting = false; // --- NEW: Reset reroute flag ---
+      _isRouting = true;
+      _isFollowingUser = true;
+      _isRerouting = false;
     });
 
-    // 3. Move map to user's location
-    // The CurrentLocationLayer will handle the rotation automatically
     if (_currentPosition != null) {
+      // --- *** REFACTORED: Use latlong.LatLng directly *** ---
       _mapController.move(
-        _toFlutterMapLatLng(
-          LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-        ),
+        LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
         18.0,
       );
     } else {
-      // Fallback if no position yet: Fit route bounds
-      final flutterMapPoints = route.map(_toFlutterMapLatLng).toList();
+      // --- *** REFACTORED: No conversion needed *** ---
+      final flutterMapPoints = route;
       if (flutterMapPoints.isNotEmpty) {
         final bounds = LatLngBounds.fromPoints(flutterMapPoints);
         _mapController.fitCamera(
@@ -1564,15 +1481,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         );
       }
     }
-
-    // 4. Speak
     if (steps.isNotEmpty) {
       _speak(steps[0].instruction);
     }
   }
 
   void _showDirectionsSheet() {
-    if (!mounted) return; // Added mounted check
+    if (!mounted) return;
     if (_finalDestinationCoordinates == null) return;
     final destinationName = _finalDestinationName;
 
@@ -1592,7 +1507,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       builder: (BuildContext sheetContext) {
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setModalState) {
-            // Added mounted check inside future
             if (_isModalLoading) {
               Future.wait([fetchWalk, fetchBike]).then((_) {
                 if (mounted) {
@@ -1612,7 +1526,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 final startLocationText = _currentPosition != null
                     ? 'Your Current Location'
                     : 'Getting Location...';
-                // Check the *cached* route, not the active one
                 final bool showRouteDetails =
                     _selectedProfile.isNotEmpty &&
                     (_selectedProfile == 'walk'
@@ -1672,19 +1585,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                   onTap: () {
                                     if (_cachedWalkRoute.isNotEmpty &&
                                         _cachedWalkSteps.isNotEmpty) {
-                                      if (Navigator.canPop(sheetContext)) {
+                                      if (Navigator.canPop(sheetContext))
                                         Navigator.pop(sheetContext);
-                                      }
                                       _startNavigation(
                                         profile: 'walk',
                                         route: _cachedWalkRoute,
                                         steps: _cachedWalkSteps,
                                       );
                                     } else if (_walkDuration != 'Err') {
-                                      if (Navigator.canPop(sheetContext)) {
+                                      if (Navigator.canPop(sheetContext))
                                         Navigator.pop(sheetContext);
-                                      }
-                                      if (mounted) {
+                                      if (mounted)
                                         ScaffoldMessenger.of(
                                           context,
                                         ).showSnackBar(
@@ -1694,7 +1605,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                             ),
                                           ),
                                         );
-                                      }
                                     }
                                   },
                                 ),
@@ -1707,19 +1617,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                   onTap: () {
                                     if (_cachedBikeRoute.isNotEmpty &&
                                         _cachedBikeSteps.isNotEmpty) {
-                                      if (Navigator.canPop(sheetContext)) {
+                                      if (Navigator.canPop(sheetContext))
                                         Navigator.pop(sheetContext);
-                                      }
                                       _startNavigation(
                                         profile: 'bike',
                                         route: _cachedBikeRoute,
                                         steps: _cachedBikeSteps,
                                       );
                                     } else if (_bikeDuration != 'Err') {
-                                      if (Navigator.canPop(sheetContext)) {
+                                      if (Navigator.canPop(sheetContext))
                                         Navigator.pop(sheetContext);
-                                      }
-                                      if (mounted) {
+                                      if (mounted)
                                         ScaffoldMessenger.of(
                                           context,
                                         ).showSnackBar(
@@ -1729,7 +1637,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                             ),
                                           ),
                                         );
-                                      }
                                     }
                                   },
                                 ),
@@ -1944,56 +1851,31 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    // --- START: NEW DYNAMIC LOGIC ---
     final mediaQuery = MediaQuery.of(context);
     final screenHeight = mediaQuery.size.height;
     final bottomPadding = mediaQuery.padding.bottom;
-
-    // 1. Define the search bar's total height (including status bar)
-    final double searchBarHeight =
-        mediaQuery.padding.top + 80.0; // Approx height
-
-    // 2. Define the animation trigger ranges
-    const double sheetStartMove = 0.2; // Sheet pos when animation starts
-    const double sheetEndMove = 0.4; // Sheet pos when animation is complete
-
-    // 3. Calculate the progress of the sheet's drag
-    // This calculates how far (0.0 to 1.0) the user has dragged
-    // within our defined range (0.2 to 0.4).
+    final double searchBarHeight = mediaQuery.padding.top + 80.0;
+    const double sheetStartMove = 0.2;
+    const double sheetEndMove = 0.4;
     double dragProgress =
         (_sheetPosition - sheetStartMove) / (sheetEndMove - sheetStartMove);
-
-    // 4. Clamp progress between 0.0 (not started) and 1.0 (fully finished)
     dragProgress = dragProgress.clamp(0.0, 1.0);
-
-    // 5. Calculate the search bar's vertical offset
     final double searchBarTopOffset = -searchBarHeight * dragProgress;
-
-    // 6. Calculate the search bar's opacity
     final double searchBarOpacity = _isRouting ? 0.0 : (1.0 - dragProgress);
-
-    // GPS Button logic (remains the same)
     final bool isSheetLow = _sheetPosition < 0.25;
     final double gpsButtonOpacity = (_isRouting || !isSheetLow) ? 0.0 : 1.0;
-
-    // 7. Calculate the height of the navigation card (approximation)
-    // The navigation card is roughly 200 units tall + bottom padding.
-    // The AnimatedSlide has a padding of 12.0 on all sides.
     final double navCardHeight = 200.0 + bottomPadding;
+    final double recentreButtonBottomOffset = navCardHeight + 16.0;
 
-    // 8. Calculate the dynamic bottom position for the Re-centre button
-    // The Re-centre button should sit just above the navigation card when it's visible.
-    final double recentreButtonBottomOffset =
-        navCardHeight + 16.0; // Card height + spacing
-    // --- END: NEW DYNAMIC LOGIC ---
-
-    final campusCenter = latlong.LatLng(12.970856, 79.159515);
+    // --- *** REFACTORED: Use latlong.LatLng directly *** ---
+    final campusCenter = LatLng(12.970856, 79.159515);
 
     final List<Marker> locationMarkers = [];
     if (_finalDestinationCoordinates != null && !_isRouting) {
+      // --- *** REFACTORED: Use latlong.LatLng directly *** ---
       locationMarkers.add(
         Marker(
-          point: _toFlutterMapLatLng(_finalDestinationCoordinates!),
+          point: _finalDestinationCoordinates!,
           width: 50,
           height: 50,
           child: GestureDetector(
@@ -2005,12 +1887,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ),
       );
     }
-
     final List<Polyline> routePolylines = [];
     if (_remainingRouteCoordinates.isNotEmpty) {
+      // --- *** REFACTORED: Use latlong.LatLng directly *** ---
       routePolylines.add(
         Polyline(
-          points: _remainingRouteCoordinates.map(_toFlutterMapLatLng).toList(),
+          points: _remainingRouteCoordinates,
           strokeWidth: 5.0,
           color: Colors.deepPurple,
         ),
@@ -2018,7 +1900,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
 
     return Scaffold(
-      resizeToAvoidBottomInset: false, // Prevents resize when keyboard appears
+      resizeToAvoidBottomInset: false,
       extendBody: true,
       body: Stack(
         children: [
@@ -2029,33 +1911,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 initialCenter: campusCenter,
                 initialZoom: 16.0,
                 minZoom: 10.0,
-                maxZoom: 18.0,
+                maxZoom: 19.0, // Set back to 19
                 interactionOptions: const InteractionOptions(
                   flags: InteractiveFlag.all,
                   enableMultiFingerGestureRace: true,
                 ),
-                onLongPress: _onMapLongPress,
+                // --- *** REFACTORED: Use latlong.LatLng directly *** ---
+                onLongPress: (tapPosition, point) =>
+                    _onMapLongPress(tapPosition, point),
                 onPointerDown: (details, point) {
-                  // Manually panning will stop the "follow" mode
                   if (_isFollowingUser && details.buttons == kPrimaryButton) {
-                    if (mounted) {
-                      setState(() {
-                        _isFollowingUser = false;
-                      });
-                    }
+                    if (mounted) setState(() => _isFollowingUser = false);
                   }
                 },
               ),
               children: [
                 TileLayer(
-                  // --- FIX: Using public CartoDB Dark Tileset (no 401 error) ---
-                  urlTemplate: _isNightMode
-                      ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-                      : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  // --- *** NIGHT MODE REMOVED *** ---
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.example.vit_navigation_app',
                   maxZoom: 19.0,
-                  tileProvider: CachedTileProvider(),
-                  // --- FIX: Explicitly handle {r} placeholder to clear warning ---
+                  // --- *** PERFORMANCE FIX: Use _tileProvider variable *** ---
+                  tileProvider: _tileProvider,
                   retinaMode: true,
                 ),
                 if (_isLocationServiceEnabled)
@@ -2090,20 +1967,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ],
             ),
           ),
-
-          // --- MODIFIED: SEARCH BAR WRAPPER ---
           Transform.translate(
-            offset: Offset(0, searchBarTopOffset), // Use the new dynamic offset
+            offset: Offset(0, searchBarTopOffset),
             child: AnimatedOpacity(
-              opacity: searchBarOpacity, // Use the new dynamic opacity
-              duration: const Duration(milliseconds: 100), // Quick fade
+              opacity: searchBarOpacity,
+              duration: const Duration(milliseconds: 100),
               child: IgnorePointer(
-                // Ignore taps if routing OR if it's sliding off-screen
                 ignoring: _isRouting || dragProgress > 0.0,
                 child: Stack(
-                  // Use Stack to keep original positioning logic
                   children: [
-                    // --- Search Bar ---
                     Positioned(
                       top: 0,
                       left: 0,
@@ -2152,7 +2024,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         ),
                       ),
                     ),
-                    // --- Search Results List ---
                     Positioned(
                       top: MediaQuery.of(context).padding.top + 80.0,
                       left: 16.0,
@@ -2203,34 +2074,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             ),
           ),
-          // --- END OF SEARCH BAR MODIFICATION ---
 
-          // --- NEW: NIGHT MODE BUTTON (Top Right, Fades with Search/Sheet) ---
-          Positioned(
-            top: mediaQuery.padding.top + 80.0, // Under search bar (approx)
-            right: 16.0,
-            child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 300),
-              opacity: gpsButtonOpacity, // Same logic as GPS button
-              child: IgnorePointer(
-                ignoring: gpsButtonOpacity == 0.0,
-                child: FloatingActionButton(
-                  heroTag: 'night_mode_btn',
-                  onPressed: _toggleNightMode,
-                  backgroundColor: _isNightMode ? Colors.white : Colors.black,
-                  foregroundColor: _isNightMode ? Colors.black : Colors.white,
-                  mini: true, // Make it smaller to fit
-                  child: Icon(_isNightMode ? Icons.wb_sunny : Icons.dark_mode),
-                ),
-              ),
-            ),
-          ),
-          // --- END NEW NIGHT MODE BUTTON ---
-
-          // --- MODIFIED: RE-CENTRE BUTTON (FOR NAVIGATION MODE) ---
+          // --- *** NIGHT MODE REMOVED *** ---
           if (_isRouting && !_isFollowingUser)
             Positioned(
-              // Kept on the right, above the nav card
               bottom: recentreButtonBottomOffset + 10,
               right: 16.0,
               child: Card(
@@ -2238,12 +2085,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(30),
                 ),
-                color: Colors.blueAccent, // Dark background
+                color: Colors.blueAccent,
                 child: InkWell(
-                  onTap: _centerMapOnUser, // Re-uses existing logic
+                  onTap: _centerMapOnUser,
                   borderRadius: BorderRadius.circular(30),
                   child: const Padding(
-                    // Increased vertical padding for height
                     padding: EdgeInsets.symmetric(
                       horizontal: 16.0,
                       vertical: 16.0,
@@ -2270,9 +2116,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 ),
               ),
             ),
-          // --- END NEW RE-CENTRE BUTTON ---
-
-          // --- GPS Button (Existing, only visible when sheet is low and not routing) ---
           Positioned(
             right: 16.0,
             bottom: (screenHeight * _sheetPosition) + 20.0,
@@ -2297,12 +2140,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             ),
           ),
-
-          // =========================================================================
-          // === DRAGGABLE SCROLLABLE SHEET WRAPPED IN ANIMATED SLIDE ===
-          // =========================================================================
           AnimatedSlide(
-            // Slide down by 100% of the screen height (vertical offset of 1.0)
             offset: _isRouting ? const Offset(0, 1) : const Offset(0, 0),
             duration: const Duration(milliseconds: 400),
             curve: Curves.easeOutCubic,
@@ -2312,162 +2150,157 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               minChildSize: 0.2,
               maxChildSize: 0.95,
               expand: true,
-              builder: (BuildContext context, ScrollController scrollController) {
-                // IgnorePointer when sliding off-screen to prevent interaction
-                return IgnorePointer(
-                  ignoring: _isRouting,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).scaffoldBackgroundColor,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(20),
-                        topRight: Radius.circular(20),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 10,
-                          offset: const Offset(0, -5),
+              builder:
+                  (BuildContext context, ScrollController scrollController) {
+                    return IgnorePointer(
+                      ignoring: _isRouting,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).scaffoldBackgroundColor,
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(20),
+                            topRight: Radius.circular(20),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 10,
+                              offset: const Offset(0, -5),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        Expanded(
-                          child: SingleChildScrollView(
-                            controller: scrollController,
-                            child: Column(
-                              children: [
-                                // --- HEADER ---
-                                Padding(
-                                  padding: const EdgeInsets.only(
-                                    top: 10.0,
-                                    bottom: 8.0,
-                                  ),
-                                  child: Column(
-                                    children: [
-                                      Center(
-                                        child: Container(
-                                          width: 40,
-                                          height: 5,
-                                          decoration: BoxDecoration(
-                                            color: Colors.grey[300],
-                                            borderRadius: BorderRadius.circular(
-                                              10,
+                        child: Column(
+                          children: [
+                            Expanded(
+                              child: SingleChildScrollView(
+                                controller: scrollController,
+                                child: Column(
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        top: 10.0,
+                                        bottom: 8.0,
+                                      ),
+                                      child: Column(
+                                        children: [
+                                          Center(
+                                            child: Container(
+                                              width: 40,
+                                              height: 5,
+                                              decoration: BoxDecoration(
+                                                color: Colors.grey[300],
+                                                borderRadius:
+                                                    BorderRadius.circular(10),
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 16.0,
-                                        ),
-                                        child: Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Text(
-                                              _selectedIndex == 0
-                                                  ? 'Latest in the area'
-                                                  : _getTabTitle(
-                                                      _selectedIndex,
-                                                    ),
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .headlineSmall
-                                                  ?.copyWith(
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
+                                          const SizedBox(height: 8),
+                                          Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 16.0,
                                             ),
-                                            Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 8,
-                                                    vertical: 4,
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment
+                                                      .spaceBetween,
+                                              children: [
+                                                Text(
+                                                  _selectedIndex == 0
+                                                      ? 'Latest in the area'
+                                                      : _getTabTitle(
+                                                          _selectedIndex,
+                                                        ),
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .headlineSmall
+                                                      ?.copyWith(
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                      ),
+                                                ),
+                                                Container(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 8,
+                                                        vertical: 4,
+                                                      ),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.grey[200],
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          15,
+                                                        ),
                                                   ),
-                                              decoration: BoxDecoration(
-                                                color: Colors.grey[200],
-                                                borderRadius:
-                                                    BorderRadius.circular(15),
-                                              ),
-                                              child: Row(
-                                                children: [
-                                                  Text(
-                                                    '24°',
-                                                    style: TextStyle(
-                                                      color: Colors.grey[700],
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                    ),
+                                                  child: Row(
+                                                    children: [
+                                                      Text(
+                                                        '24°',
+                                                        style: TextStyle(
+                                                          color:
+                                                              Colors.grey[700],
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                        ),
+                                                      ),
+                                                      const Icon(
+                                                        Icons.cloud,
+                                                        size: 16,
+                                                        color: Colors.grey,
+                                                      ),
+                                                      const SizedBox(width: 4),
+                                                      const Text(
+                                                        '● NAQI',
+                                                        style: TextStyle(
+                                                          fontSize: 12,
+                                                          color: Colors.green,
+                                                        ),
+                                                      ),
+                                                    ],
                                                   ),
-                                                  const Icon(
-                                                    Icons.cloud,
-                                                    size: 16,
-                                                    color: Colors.grey,
-                                                  ),
-                                                  const SizedBox(width: 4),
-                                                  const Text(
-                                                    '● NAQI',
-                                                    style: TextStyle(
-                                                      fontSize: 12,
-                                                      color: Colors.green,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
+                                                ),
+                                              ],
                                             ),
-                                          ],
-                                        ),
+                                          ),
+                                        ],
                                       ),
-                                    ],
-                                  ),
+                                    ),
+                                    const Divider(height: 1),
+                                    Container(
+                                      padding: const EdgeInsets.only(
+                                        top: 16.0,
+                                        bottom: 0.0,
+                                      ),
+                                      child: _buildCurrentContent(
+                                        _selectedIndex,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                // --- DIVIDER ---
-                                const Divider(height: 1),
-                                // --- MAIN CONTENT ---
-                                Container(
-                                  padding: const EdgeInsets.only(
-                                    top: 16.0,
-                                    // Removed bottom padding because the navigation bar is moved
-                                    bottom: 0.0,
-                                  ),
-                                  child: _buildCurrentContent(_selectedIndex),
-                                ),
-                              ],
+                              ),
                             ),
-                          ),
+                          ],
                         ),
-                        // --- REMOVED NAVIGATION BAR FROM HERE ---
-                      ],
-                    ),
-                  ),
-                );
-              },
+                      ),
+                    );
+                  },
             ),
           ),
-          // =========================================================================
-          // === NAVIGATION BAR WRAPPED IN ANIMATED SLIDE AND REPOSITIONED ===
-          // =========================================================================
           Positioned(
             bottom: 0,
             left: 0,
             right: 0,
             child: AnimatedSlide(
-              // Slide down by 100% of its height (Offset(0, 2) is a safe value for this)
               offset: _isRouting ? const Offset(0, 2) : const Offset(0, 0),
               duration: const Duration(milliseconds: 400),
               curve: Curves.easeOutCubic,
               child: IgnorePointer(
-                ignoring: _isRouting, // Disable interaction when hidden
+                ignoring: _isRouting,
                 child: SafeArea(
                   child: Padding(
                     padding: EdgeInsets.only(
                       left: 16.0,
                       right: 16.0,
-                      bottom:
-                          bottomPadding +
-                          20.0, // Ensures margin from screen edge
+                      bottom: bottomPadding + 20.0,
                       top: 8.0,
                     ),
                     child: CustomNavigationBar(
@@ -2501,9 +2334,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             ),
           ),
-          // --- END OF NAVIGATION BAR MODIFICATION ---
-
-          // --- START OF NAVIGATION CARD (ROUTE INSTRUCTIONS) ---
           Positioned(
             bottom: 0,
             left: 0,
@@ -2511,7 +2341,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             child: AnimatedSlide(
               duration: const Duration(milliseconds: 300),
               curve: Curves.easeOutCubic,
-              // The instructions card appears when _isRouting is true
               offset: _isRouting ? Offset.zero : const Offset(0, 2),
               child: SafeArea(
                 child: Padding(
@@ -2622,7 +2451,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             ),
           ),
-          // --- END OF NAVIGATION CARD ---
         ],
       ),
     );
@@ -2739,21 +2567,18 @@ class DirectoryScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final groupedLocations = <String, List<Location>>{};
     for (var loc in allLocations) {
-      if (!groupedLocations.containsKey(loc.category)) {
+      if (!groupedLocations.containsKey(loc.category))
         groupedLocations[loc.category] = [];
-      }
       groupedLocations[loc.category]!.add(loc);
     }
 
-    // --- NEW: Sort categories for better organization ---
     final sortedKeys = groupedLocations.keys.toList()
       ..sort((a, b) {
-        // Prioritize Hostels and Academic Blocks
         if (a.contains('Hostel') && !b.contains('Hostel')) return -1;
         if (!a.contains('Hostel') && b.contains('Hostel')) return 1;
         if (a.contains('Academic') && !b.contains('Academic')) return -1;
         if (!a.contains('Academic') && b.contains('Academic')) return 1;
-        return a.compareTo(b); // Alphabetical fallback
+        return a.compareTo(b);
       });
 
     return Padding(
@@ -2776,19 +2601,16 @@ class DirectoryScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          // --- MODIFIED: Use sortedKeys to build the list ---
           ...sortedKeys.map((key) {
             final entry = groupedLocations[key]!;
-            // Sort locations alphabetically within each category
             entry.sort((a, b) => a.name.compareTo(b.name));
-
             return Padding(
               padding: const EdgeInsets.only(bottom: 20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    key, // The category name (e.g., "Men's Hostel")
+                    key,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.bold,
                       color: Colors.blue[800],
@@ -2847,7 +2669,6 @@ class _TransportationOption extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) {
-    // Corrected BuildContext
     final primaryColor = Colors.blue[700]!;
     final cardColor = isSelected ? primaryColor : Colors.white;
     final iconTextColor = isSelected ? Colors.white : primaryColor;
@@ -2895,7 +2716,7 @@ class _TransportationOption extends StatelessWidget {
 
 // Corrected CachedTileProvider constructor
 class CachedTileProvider extends TileProvider {
-  CachedTileProvider(); // Removed const
+  CachedTileProvider();
   @override
   ImageProvider getImage(TileCoordinates coordinates, TileLayer options) {
     return CachedNetworkImageProvider(getTileUrl(coordinates, options));
