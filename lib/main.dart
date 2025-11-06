@@ -9,7 +9,6 @@ import 'package:flutter_map_location_marker/flutter_map_location_marker.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
-// *** FIX: Removed google_maps_flutter and use latlong2 directly ***
 import 'package:latlong2/latlong.dart';
 
 void main() {
@@ -51,6 +50,25 @@ class RouteStep {
   });
 }
 
+// =========================================================================
+// === PERFORMANCE FIX: Directory List Item Models ===
+// =========================================================================
+/// A common interface for items in our directory ListView
+abstract class DirectoryListItem {}
+
+/// Represents a blue category header (e.g., "Academic Block")
+class CategoryHeaderItem extends DirectoryListItem {
+  final String categoryName;
+  CategoryHeaderItem(this.categoryName);
+}
+
+/// Represents a location card under a category
+class LocationItem extends DirectoryListItem {
+  final Location location;
+  LocationItem(this.location);
+}
+// =========================================================================
+
 class VitNavigationApp extends StatelessWidget {
   const VitNavigationApp({super.key});
 
@@ -86,11 +104,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
 
-  double _sheetPosition = 0.2;
-
   late final AnimationController _rotationAnimationController;
+  late AnimationController _bottomSheetAnimationController;
 
   bool _isFollowingUser = false;
+
+  // --- 👇 SPEEDOMETER VARIABLE ---
+  String _currentSpeed = '0 km/h';
 
   List<LatLng> _fullRouteCoordinates = []; // <-- This is now from latlong2
   List<LatLng> _remainingRouteCoordinates = []; // <-- This is now from latlong2
@@ -98,7 +118,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String _selectedProfile = '';
   bool _isRouting = false;
 
-  List<LatLng> _cachedWalkRoute = []; // <-- This is now from latlong2
+  List<LatLng> _cachedWalkRoute = []; // <-- This inow from latlong2
   List<LatLng> _cachedBikeRoute = []; // <-- This is now from latlong2
   List<RouteStep> _cachedWalkSteps = [];
   List<RouteStep> _cachedBikeSteps = [];
@@ -119,18 +139,32 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   List<Location> _searchResults = [];
   bool _isSearchActive = false;
 
+  // --- PERFORMANCE FIX: Add this new variable ---
+  List<DirectoryListItem> _directoryItems = [];
+
+  // --- ☀️ WEATHER INTEGRATION (Open-Meteo) ☀️ ---
+  // We'll use the campus center for weather
+  final LatLng _velloreCampusCenter = const LatLng(12.970856, 79.159515);
+
+  // State variables to hold our new data
+  bool _isWeatherLoading = true;
+  String _currentTemperature = '--°';
+  IconData _weatherIcon = Icons.cloud_outlined;
+  String _aqiString = '● ---';
+  Color _aqiColor = Colors.grey;
+
+  // --- ☀️ ADD THESE NEW WEATHER DETAIL VARIABLES ☀️ ---
+  String _weatherDescription = '...';
+  String _weatherFeelsLike = '--°';
+  String _weatherHigh = '--°';
+  String _weatherLow = '--°';
+  List<String> _hourlyTemps = [];
+  List<IconData> _hourlyIcons = [];
+  List<String> _hourlyTimes = [];
+  // --- END NEW VARIABLES ---
+
   // --- PERFORMANCE FIX: TileProvider created once ---
   final CachedTileProvider _tileProvider = CachedTileProvider();
-
-  // // --- NETWORKING: OSRM Configuration Constants ---
-  // static const String _osrmWalkBaseUrl =
-  //     'https://walk-osrm-nav.trycloudflare.com';
-  // static const String _osrmBikeBaseUrl =
-  //     'https://bike-osrm-nav.trycloudflare.com';
-
-  // // --- NETWORKING: Use the computer's local IP on the phone's hotspot network ---
-  // static const String _osrmWalkBaseUrl = 'http://10.62.20.12:8999';
-  // static const String _osrmBikeBaseUrl = 'http://10.62.20.12:5001';
 
   // --- OSRM Configuration Constants ---
   // Use the Tailscale Private IP
@@ -139,6 +173,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   // =========================================================================
   // === ALL CAMPUS LOCATIONS ===
+  // (Using const for the list and all Location objects inside)
   // =========================================================================
   final List<Location> _allLocations = const [
     // --- GATES & ENTRANCES ---
@@ -788,29 +823,320 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         : (_selectedProfile == 'bike' ? _bikeDistance : '---');
   }
 
-  // --- *** REMOVED: All LatLng conversion functions *** ---
-
   @override
   void initState() {
     super.initState();
     _initTts();
     _checkAndStartLocationStream();
+    _preProcessDirectory();
+
+    // --- ☀️ WEATHER INTEGRATION (Open-Meteo) ☀️ ---
+    // 1. Call the new fetch function
+    _fetchOpenMeteoWeather();
+    // --- END WEATHER INTEGRATION ---
+
+    // --- ⚡ SPEED CONTROL: Initialize the controller ---
+    // This controls the speed of the "Directions" bottom sheet
+    _bottomSheetAnimationController = AnimationController(
+      vsync: this,
+      // 400ms is a good, smooth speed
+      duration: const Duration(milliseconds: 400),
+      reverseDuration: const Duration(milliseconds: 300),
+    );
+    // --- END SPEED CONTROL ---
 
     _rotationAnimationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 500),
     );
-
     _searchController.addListener(_onSearchChanged);
-    _sheetController.addListener(_onSheetMoved);
   }
 
-  void _onSheetMoved() {
-    if (mounted) {
-      setState(() {
-        _sheetPosition = _sheetController.size;
+  // --- ☀️ WEATHER INTEGRATION (Open-Meteo) ☀️ ---
+  // 2. Main fetch function (NOW CORRECTLY SPLIT INTO TWO API CALLS)
+  Future<void> _fetchOpenMeteoWeather() async {
+    setState(() {
+      _isWeatherLoading = true;
+    });
+
+    try {
+      // --- Call 1: Get Weather (NOW WITH HOURLY, DAILY, & FEELS LIKE) ---
+      final weatherUri = Uri.parse(
+        'https://api.open-meteo.com/v1/forecast?latitude=${_velloreCampusCenter.latitude}&longitude=${_velloreCampusCenter.longitude}&current=temperature_2m,apparent_temperature,weather_code&hourly=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&forecast_days=1&timezone=auto',
+      );
+
+      final weatherResponse = await http.get(weatherUri);
+      debugPrint('Open-Meteo Weather Response: ${weatherResponse.body}');
+      final weatherData = json.decode(weatherResponse.body);
+
+      // --- Call 2: Get Air Quality (AQI) ---
+      final aqiUri = Uri.parse(
+        'https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${_velloreCampusCenter.latitude}&longitude=${_velloreCampusCenter.longitude}&current=us_aqi&timezone=auto',
+      );
+
+      final aqiResponse = await http.get(aqiUri);
+      debugPrint('Open-Meteo AQI Response: ${aqiResponse.body}');
+      final aqiData = json.decode(aqiResponse.body);
+
+      // Check if the data is valid before using it
+      if (!mounted) return;
+      if (weatherData == null ||
+          weatherData['current'] == null ||
+          weatherData['current']['temperature_2m'] == null) {
+        throw Exception(
+          'Invalid weather data structure: ${weatherResponse.body}',
+        );
+      }
+      if (aqiData == null ||
+          aqiData['current'] == null ||
+          aqiData['current']['us_aqi'] == null) {
+        throw Exception('Invalid AQI data structure: ${aqiResponse.body}');
+      }
+
+      // --- PARSE ALL THE NEW DATA ---
+      // Parse Current
+      final currentTemp = (weatherData['current']['temperature_2m'] as num)
+          .toDouble();
+      final feelsLikeTemp =
+          (weatherData['current']['apparent_temperature'] as num).toDouble();
+      final currentCode = (weatherData['current']['weather_code'] as num)
+          .toInt();
+
+      // Parse Daily
+      final highTemp = (weatherData['daily']['temperature_2m_max'][0] as num)
+          .toDouble();
+      final lowTemp = (weatherData['daily']['temperature_2m_min'][0] as num)
+          .toDouble();
+
+      // Parse Hourly
+      final List<String> times = List<String>.from(
+        weatherData['hourly']['time'],
+      );
+      final List<double> temps = List<double>.from(
+        weatherData['hourly']['temperature_2m'],
+      );
+      final List<int> codes = List<int>.from(
+        weatherData['hourly']['weather_code'],
+      );
+
+      // Find the current hour index to start the forecast
+      final now = DateTime.now();
+      int currentHourIndex = times.indexWhere((time) {
+        try {
+          return DateTime.parse(time).hour == now.hour;
+        } catch (e) {
+          return false;
+        }
       });
+      if (currentHourIndex == -1) currentHourIndex = 0; // Fallback
+
+      // Build our hourly lists (for the next 12 hours)
+      List<String> hourlyTimes = [];
+      List<String> hourlyTemps = [];
+      List<IconData> hourlyIcons = [];
+
+      int count = 0;
+      for (int i = currentHourIndex; i < times.length && count < 12; i++) {
+        hourlyTimes.add(_formatApiTime(times[i]));
+        hourlyTemps.add('${temps[i].round()}°');
+        hourlyIcons.add(_getIconForWeatherCode(codes[i]));
+        count++;
+      }
+
+      // Parse AQI
+      final aqi = (aqiData['current']['us_aqi'] as num).toInt();
+
+      // --- Update State with all data ---
+      setState(() {
+        // Current
+        _currentTemperature = '${currentTemp.round()}°';
+        _weatherIcon = _getIconForWeatherCode(currentCode);
+        _weatherDescription = _getWeatherDescription(
+          currentCode,
+        ); // Use new helper
+        _weatherFeelsLike = 'Feels like: ${feelsLikeTemp.round()}°';
+
+        // Daily
+        _weatherHigh = 'H: ${highTemp.round()}°';
+        _weatherLow = 'L: ${lowTemp.round()}°';
+
+        // Hourly
+        _hourlyTimes = hourlyTimes;
+        _hourlyTemps = hourlyTemps;
+        _hourlyIcons = hourlyIcons;
+
+        // AQI
+        _aqiString = _getAQIString(aqi);
+        _aqiColor = _getAQIColor(aqi);
+
+        _isWeatherLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error fetching Open-Meteo weather: $e');
+      if (mounted) {
+        setState(() {
+          _isWeatherLoading = false;
+          // This will now correctly show "Error"
+          _currentTemperature = 'Error';
+          _weatherIcon = Icons.cloud_off; // A better error icon
+          _aqiString = '● ---';
+        });
+      }
     }
+  }
+
+  // 3. Helper to map Open-Meteo WMO codes to Material Icons
+  IconData _getIconForWeatherCode(int code) {
+    switch (code) {
+      case 0: // Clear sky
+        return Icons.wb_sunny;
+      case 1: // Mainly clear
+      case 2: // Partly cloudy
+      case 3: // Overcast
+        return Icons.cloud_outlined;
+      case 45: // Fog
+      case 48: // Depositing rime fog
+        return Icons.foggy;
+      case 51: // Drizzle: Light
+      case 53: // Drizzle: Moderate
+      case 55: // Drizzle: Dense
+        return Icons.grain; // Light rain icon
+      case 61: // Rain: Slight
+      case 63: // Rain: Moderate
+      case 65: // Rain: Heavy
+        return Icons.beach_access;
+      case 80: // Rain showers: Slight
+      case 81: // Rain showers: Moderate
+      case 82: // Rain showers: Violent
+        return Icons.shower;
+      case 71: // Snow fall: Slight
+      case 73: // Snow fall: Moderate
+      case 75: // Snow fall: Heavy
+      case 77: // Snow grains
+      case 85: // Snow showers: Slight
+      case 86: // Snow showers: Heavy
+        return Icons.ac_unit;
+      case 95: // Thunderstorm: Slight or moderate
+      case 96: // Thunderstorm with slight hail
+      case 99: // Thunderstorm with heavy hail
+        return Icons.thunderstorm;
+      default:
+        return Icons.cloud_outlined;
+    }
+  }
+
+  // --- ☀️ ADD THIS NEW HELPER FUNCTION ☀️ ---
+  // Helper to get a text description
+  String _getWeatherDescription(int code) {
+    switch (code) {
+      case 0:
+        return 'Clear Sky';
+      case 1:
+      case 2:
+        return 'Partly Cloudy';
+      case 3:
+        return 'Overcast';
+      case 45:
+      case 48:
+        return 'Fog';
+      case 51:
+      case 53:
+      case 55:
+        return 'Drizzle';
+      case 61:
+      case 63:
+      case 65:
+        return 'Rain';
+      case 80:
+      case 81:
+      case 82:
+        return 'Rain Showers';
+      case 71:
+      case 73:
+      case 75:
+      case 77:
+      case 85:
+      case 86:
+        return 'Snow';
+      case 95:
+      case 96:
+      case 99:
+        return 'Thunderstorm';
+      default:
+        return 'Cloudy';
+    }
+  }
+  // --- END NEW HELPER FUNCTION ---
+
+  // 4. Helper to get AQI string and color (based on US AQI index values)
+  String _getAQIString(int aqi) {
+    if (aqi <= 50) return '● Good';
+    if (aqi <= 100) return '● Mod';
+    if (aqi <= 150) return '● Unhealthy*'; // Unhealthy for Sensitive Groups
+    if (aqi <= 200) return '● Unhealthy';
+    if (aqi <= 300) return '● V. Unhealthy';
+    return '● Hazardous';
+  }
+
+  Color _getAQIColor(int aqi) {
+    if (aqi <= 50) return Colors.green;
+    if (aqi <= 100) return Colors.yellow.shade700;
+    if (aqi <= 150) return Colors.orange;
+    if (aqi <= 200) return Colors.red;
+    if (aqi <= 300) return Colors.purple;
+    return Colors.brown; // Hazardous
+  }
+
+  // --- ☀️ ADD THIS NEW HELPER FUNCTION ☀️ ---
+  String _formatApiTime(String apiTime) {
+    try {
+      final hour = int.parse(apiTime.split('T')[1].split(':')[0]);
+      if (hour == 0) return '12 AM';
+      if (hour == 12) return '12 PM';
+      if (hour < 12) return '$hour AM';
+      return '${hour - 12} PM';
+    } catch (e) {
+      return 'Now';
+    }
+  }
+  // --- END NEW HELPER FUNCTION ---
+
+  // --- END WEATHER INTEGRATION ---
+
+  // --- PERFORMANCE FIX: Add this new function ---
+  void _preProcessDirectory() {
+    final groupedLocations = <String, List<Location>>{};
+    for (var loc in _allLocations) {
+      if (!groupedLocations.containsKey(loc.category)) {
+        groupedLocations[loc.category] = [];
+      }
+      groupedLocations[loc.category]!.add(loc);
+    }
+
+    final sortedKeys = groupedLocations.keys.toList()
+      ..sort((a, b) {
+        if (a.contains('Hostel') && !b.contains('Hostel')) return -1;
+        if (!a.contains('Hostel') && b.contains('Hostel')) return 1;
+        if (a.contains('Academic') && !b.contains('Academic')) return -1;
+        if (!a.contains('Academic') && b.contains('Academic')) return 1;
+        return a.compareTo(b);
+      });
+
+    // Now, flatten the list into our new models
+    final List<DirectoryListItem> flattenedList = [];
+    for (var key in sortedKeys) {
+      flattenedList.add(CategoryHeaderItem(key)); // Add header
+
+      final locations = groupedLocations[key]!;
+      locations.sort((a, b) => a.name.compareTo(b.name)); // Sort locations
+
+      for (var loc in locations) {
+        flattenedList.add(LocationItem(loc)); // Add location item
+      }
+    }
+
+    // Store the pre-processed list
+    _directoryItems = flattenedList;
   }
 
   @override
@@ -820,7 +1146,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _rotationAnimationController.dispose();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
-    _sheetController.removeListener(_onSheetMoved);
+
+    // --- ⚡ SPEED CONTROL: Dispose the controller ---
+    _bottomSheetAnimationController.dispose();
+    // --- End Speed Control ---
+
     super.dispose();
   }
 
@@ -878,8 +1208,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void _animateRotationTo(double targetRotation) {
     final currentRotation = _mapController.camera.rotation;
     double normalize(double angle) {
-      while (angle <= -180) angle += 360;
-      while (angle > 180) angle -= 360;
+      while (angle <= -180) {
+        angle += 360;
+      }
+      while (angle > 180) {
+        angle -= 360;
+      }
       return angle;
     }
 
@@ -943,16 +1277,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           (Position position) async {
             if (!mounted) return;
 
-            setState(() {
-              _currentPosition = position;
-            });
+            _currentPosition = position; // This stays (no setState)
+
+            // --- 👇 SPEEDOMETER: Update speed during routing ---
+            if (_isRouting && mounted) {
+              double speedInKmh = position.speed * 3.6;
+              setState(() {
+                _currentSpeed = '${speedInKmh.round()} km/h';
+              });
+            }
+            // --- END SPEEDOMETER ---
 
             debugPrint(
-              "New Position: ${position.latitude}, ${position.longitude}, Heading: ${position.heading}",
+              "New Position: ${position.latitude}, ${position.longitude}, Speed: ${position.speed} m/s",
             );
 
             if (_isRouting && _activeSteps.isNotEmpty) {
-              // --- *** REFACTORED: Use latlong.LatLng directly *** ---
               final userLocation = LatLng(
                 position.latitude,
                 position.longitude,
@@ -1049,6 +1389,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               }
             } else if (_finalDestinationCoordinates != null &&
                 !_isModalLoading) {
+              // This check is fine, as it only runs when not routing
               _fetchRouteSummary('walk', fireStateUpdate: true);
               _fetchRouteSummary('bike', fireStateUpdate: true);
             }
@@ -1064,7 +1405,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         );
   }
 
-  // --- *** NETWORKING FIX: Route Summary Fetch *** ---
   Future<bool> _fetchRouteSummary(
     String profile, {
     bool fireStateUpdate = false,
@@ -1082,19 +1422,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       });
     }
 
-    // --- *** REFACTORED: Use latlong.LatLng directly *** ---
     final start = LatLng(
       _currentPosition!.latitude,
       _currentPosition!.longitude,
     );
     final end = destination;
 
-    // Select the correct base URL based on profile
     final String baseUrl = profile == 'walk'
         ? _osrmWalkBaseUrl
         : _osrmBikeBaseUrl;
 
-    // Construct the full URL
     final url = Uri.parse(
       '$baseUrl/route/v1/$profile/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=false&geometries=geojson',
     );
@@ -1139,7 +1476,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return false;
   }
 
-  // --- *** NETWORKING FIX: Route Details Fetch *** ---
   Future<bool> _fetchRouteDetails(String profile) async {
     final destination = _finalDestinationCoordinates;
     if (_currentPosition == null || destination == null) return false;
@@ -1158,19 +1494,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       });
     }
 
-    // --- *** REFACTORED: Use latlong.LatLng directly *** ---
     final start = LatLng(
       _currentPosition!.latitude,
       _currentPosition!.longitude,
     );
     final end = destination;
 
-    // Select the correct base URL based on profile
     final String baseUrl = profile == 'walk'
         ? _osrmWalkBaseUrl
         : _osrmBikeBaseUrl;
 
-    // Construct the full URL
     final url = Uri.parse(
       '$baseUrl/route/v1/$profile/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson&steps=true',
     );
@@ -1190,7 +1523,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           List<LatLng> points = [];
           if (geometry != null && geometry['coordinates'] != null) {
             for (var coord in geometry['coordinates']) {
-              // --- *** REFACTORED: Use latlong.LatLng directly *** ---
               points.add(LatLng(coord[1], coord[0]));
             }
           }
@@ -1205,7 +1537,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   RouteStep(
                     instruction: maneuver['instruction'] ?? '',
                     distance: (step['distance'] as num).toDouble(),
-                    // --- *** REFACTORED: Use latlong.LatLng directly *** ---
                     location: LatLng(
                       maneuver['location'][1],
                       maneuver['location'][0],
@@ -1257,7 +1588,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
     return false;
   }
-  // --- *** END NETWORKING FIX *** ---
 
   String _formatDuration(int seconds) {
     if (seconds < 60) return '$seconds sec';
@@ -1289,6 +1619,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _selectedIndex = 0;
       _isFollowingUser = false;
       _isRerouting = false;
+
+      // --- SPEEDOMETER RESET ---
+      _currentSpeed = '0 km/h';
     });
     _flutterTts.stop();
     if (mounted && _mapController.camera.rotation != 0) {
@@ -1301,14 +1634,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  // --- THIS IS THE UPDATED FUNCTION ---
   void _setDestinationFromDirectory(Location location) {
     if (!mounted) return;
+
+    _clearSearch();
 
     Location finalDestination = location;
 
     if (location.buildingGroup != null && _currentPosition != null) {
       final String groupName = location.buildingGroup!;
-      // --- *** REFACTORED: Use latlong.LatLng directly *** ---
       final userLocation = LatLng(
         _currentPosition!.latitude,
         _currentPosition!.longitude,
@@ -1341,6 +1676,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       }
     }
 
+    // 1. Set the state first. This rebuilds the sheet
+    // to show the "Explore" tab.
     setState(() {
       _selectedIndex = 0;
       _selectedLocation = finalDestination;
@@ -1358,40 +1695,76 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _activeSteps = [];
       _currentStepIndex = 0;
     });
-    _sheetController.animateTo(
-      0.2,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeOut,
-    );
-    _showDirectionsSheet();
-  }
 
-  void _onItemTapped(int index) {
-    if (!mounted) return;
-    setState(() {
-      _selectedIndex = index;
-    });
-    if (index == 0) {
-      _sheetController.animateTo(
+    // 2. Wait for that rebuild to finish
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // Note the 'async'
+      if (!mounted) return;
+
+      // 3. NOW, animate the main sheet down
+      await _sheetController.animateTo(
         0.2,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
-    } else {
-      _sheetController.animateTo(
-        0.95,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
-    }
+
+      // 4. AFTER it's down, show the directions
+      if (mounted) {
+        // Re-check mounted after await
+        _showDirectionsSheet();
+      }
+    });
+  }
+  // --- END UPDATED FUNCTION ---
+
+  // --- FIX: This is the updated function to fix the animation bug ---
+  void _onItemTapped(int index) {
+    if (!mounted) return;
+
+    // Check if we are actually changing tabs
+    final bool isChangingTabs = _selectedIndex != index;
+
+    // 1. Set the state to trigger the rebuild
+    setState(() {
+      _selectedIndex = index;
+    });
+
+    // 2. Wait for the frame to build *first*
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return; // Always check mounted in async callbacks
+
+      // 3. NOW, run the animation
+      if (index == 0) {
+        // If "Explore" is tapped, always go to minimum size
+        _sheetController.animateTo(
+          0.2,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      } else if (isChangingTabs) {
+        // If we just *switched* to Directory/Events/Profile, animate to max
+        _sheetController.animateTo(
+          0.95,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      } else if (_selectedIndex != 0 && _sheetController.size < 0.9) {
+        // If we tapped the *same tab* again (e.g. Directory) and the
+        // sheet is pulled down, animate it back up.
+        _sheetController.animateTo(
+          0.95,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   void _onMapLongPress(TapPosition tapPosition, LatLng point) {
-    // <-- This is now from latlong2
     if (!mounted) return;
+
     setState(() {
       _selectedLocation = null;
-      // --- *** REFACTORED: Use latlong.LatLng directly *** ---
       _tappedDestination = point;
       _fullRouteCoordinates = [];
       _remainingRouteCoordinates = [];
@@ -1426,7 +1799,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _isFollowingUser = true;
       });
       if (_currentPosition != null) {
-        // --- *** REFACTORED: Use latlong.LatLng directly *** ---
         _mapController.move(
           LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
           18.0,
@@ -1442,7 +1814,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Future<void> _startNavigation({
     required String profile,
-    required List<LatLng> route, // This is now List<latlong.LatLng>
+    required List<LatLng> route,
     required List<RouteStep> steps,
   }) async {
     if (!mounted) return;
@@ -1466,13 +1838,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
 
     if (_currentPosition != null) {
-      // --- *** REFACTORED: Use latlong.LatLng directly *** ---
       _mapController.move(
         LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
         18.0,
       );
     } else {
-      // --- *** REFACTORED: No conversion needed *** ---
       final flutterMapPoints = route;
       if (flutterMapPoints.isNotEmpty) {
         final bounds = LatLngBounds.fromPoints(flutterMapPoints);
@@ -1504,6 +1874,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
+      // --- ⚡ SPEED CONTROL: Add this parameter ---
+      transitionAnimationController: _bottomSheetAnimationController,
+      // --- End Speed Control ---
       builder: (BuildContext sheetContext) {
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setModalState) {
@@ -1526,11 +1899,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 final startLocationText = _currentPosition != null
                     ? 'Your Current Location'
                     : 'Getting Location...';
+
                 final bool showRouteDetails =
                     _selectedProfile.isNotEmpty &&
                     (_selectedProfile == 'walk'
                         ? _cachedWalkRoute.isNotEmpty
                         : _cachedBikeRoute.isNotEmpty);
+
                 return Padding(
                   padding: const EdgeInsets.all(16.0),
                   child: ListView(
@@ -1585,17 +1960,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                   onTap: () {
                                     if (_cachedWalkRoute.isNotEmpty &&
                                         _cachedWalkSteps.isNotEmpty) {
-                                      if (Navigator.canPop(sheetContext))
+                                      if (Navigator.canPop(sheetContext)) {
                                         Navigator.pop(sheetContext);
+                                      }
                                       _startNavigation(
                                         profile: 'walk',
                                         route: _cachedWalkRoute,
                                         steps: _cachedWalkSteps,
                                       );
                                     } else if (_walkDuration != 'Err') {
-                                      if (Navigator.canPop(sheetContext))
+                                      if (Navigator.canPop(sheetContext)) {
                                         Navigator.pop(sheetContext);
-                                      if (mounted)
+                                      }
+                                      if (mounted) {
                                         ScaffoldMessenger.of(
                                           context,
                                         ).showSnackBar(
@@ -1605,6 +1982,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                             ),
                                           ),
                                         );
+                                      }
                                     }
                                   },
                                 ),
@@ -1617,17 +1995,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                   onTap: () {
                                     if (_cachedBikeRoute.isNotEmpty &&
                                         _cachedBikeSteps.isNotEmpty) {
-                                      if (Navigator.canPop(sheetContext))
+                                      if (Navigator.canPop(sheetContext)) {
                                         Navigator.pop(sheetContext);
+                                      }
                                       _startNavigation(
                                         profile: 'bike',
                                         route: _cachedBikeRoute,
                                         steps: _cachedBikeSteps,
                                       );
                                     } else if (_bikeDuration != 'Err') {
-                                      if (Navigator.canPop(sheetContext))
+                                      if (Navigator.canPop(sheetContext)) {
                                         Navigator.pop(sheetContext);
-                                      if (mounted)
+                                      }
+                                      if (mounted) {
                                         ScaffoldMessenger.of(
                                           context,
                                         ).showSnackBar(
@@ -1637,6 +2017,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                             ),
                                           ),
                                         );
+                                      }
                                     }
                                   },
                                 ),
@@ -1720,36 +2101,45 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildCurrentContent(int index) {
+  // --- PERFORMANCE FIX: Update signature to accept controller ---
+  Widget _buildCurrentContent(int index, ScrollController scrollController) {
     switch (index) {
       case 0:
-        return const Center(
-          child: Padding(
-            padding: EdgeInsets.only(top: 20.0),
-            child: Column(
-              children: [
-                Text(
-                  "Latest News & Quick Filters Go Here",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                SizedBox(height: 10),
-                Text(
-                  "Drag up for more information or select a tab below.",
-                  style: TextStyle(fontSize: 14, color: Colors.grey),
-                ),
-              ],
+        // Wrap simple content in a SingleChildScrollView
+        return SingleChildScrollView(
+          controller: scrollController,
+          child: const Center(
+            child: Padding(
+              padding: EdgeInsets.only(top: 20.0, bottom: 100.0), // Add padding
+              child: Column(
+                children: [
+                  Text(
+                    "Latest News & Quick Filters Go Here",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(height: 10),
+                  Text(
+                    "Drag up for more information or select a tab below.",
+                    style: TextStyle(fontSize: 14, color: Colors.grey),
+                  ),
+                ],
+              ),
             ),
           ),
         );
       case 1:
+        // --- PERFORMANCE FIX: Return new DirectoryScreen ---
         return DirectoryScreen(
-          allLocations: _allLocations,
+          processedDirectoryItems: _directoryItems,
           onLocationSelected: _setDestinationFromDirectory,
+          scrollController: scrollController, // Pass the controller
         );
       case 2:
+        // This is a list, so it should use the scrollController
         return ListView(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
+          controller: scrollController, // Use the controller
+          shrinkWrap:
+              false, // This is false by default, but good to be explicit
           padding: const EdgeInsets.symmetric(horizontal: 16.0),
           children: [
             Text(
@@ -1760,27 +2150,33 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             _buildEventCard("Hackathon 2025", "TT Auditorium", "25th Oct"),
             _buildEventCard("Tech Expo Day", "Main Lawn", "30th Oct"),
             _buildEventCard("Cultural Fest 125", "Open Arena", "5th Nov"),
-            const SizedBox(height: 50),
+            const SizedBox(height: 100), // Padding at the bottom
           ],
         );
       case 3:
-        return const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.person, size: 80, color: Colors.blueGrey),
-              SizedBox(height: 16),
-              Text(
-                "User Profile Settings",
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              ),
-              Padding(
-                padding: EdgeInsets.all(20.0),
-                child: Text(
-                  "Manage your saved places, settings, and preferences here.",
+        // Wrap simple content in a SingleChildScrollView
+        return SingleChildScrollView(
+          controller: scrollController,
+          child: const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(height: 40), // Add padding
+                Icon(Icons.person, size: 80, color: Colors.blueGrey),
+                SizedBox(height: 16),
+                Text(
+                  "User Profile Settings",
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                 ),
-              ),
-            ],
+                Padding(
+                  padding: EdgeInsets.all(20.0),
+                  child: Text(
+                    "Manage your saved places, settings, and preferences here.",
+                  ),
+                ),
+                SizedBox(height: 100), // Padding at the bottom
+              ],
+            ),
           ),
         );
       default:
@@ -1849,30 +2245,452 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return Icon(iconData, size: 40, color: Colors.blue[700]);
   }
 
+  // --- OPTIMIZATION 2: NEW WIDGET ---
+  /// This new widget isolates the UI that animates when the
+  /// sheet is dragged. It uses an [AnimatedBuilder] to listen
+  /// to the [_sheetController] and rebuilds *only* the
+  /// Search Bar and GPS Button, not the whole screen.
+  Widget _buildAnimatedUI(DraggableScrollableController controller) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, child) {
+        final mediaQuery = MediaQuery.of(context);
+        final screenHeight = mediaQuery.size.height;
+        final double searchBarHeight = mediaQuery.padding.top + 80.0;
+
+        // Get the current sheet position, with a safe default
+        final double sheetPosition = controller.isAttached
+            ? controller.size
+            : 0.2;
+
+        // All the animation logic is now calculated *inside*
+        // this lightweight builder.
+        const double sheetStartMove = 0.2;
+        const double sheetEndMove = 0.4;
+
+        double dragProgress =
+            (sheetPosition - sheetStartMove) / (sheetEndMove - sheetStartMove);
+        dragProgress = dragProgress.clamp(0.0, 1.0);
+
+        final double searchBarTopOffset = -searchBarHeight * dragProgress;
+        final double searchBarOpacity = _isRouting ? 0.0 : (1.0 - dragProgress);
+        final bool isSheetLow = sheetPosition < 0.25;
+        final double gpsButtonOpacity = (_isRouting || !isSheetLow) ? 0.0 : 1.0;
+
+        return Stack(
+          children: [
+            // --- Search Bar ---
+            Transform.translate(
+              offset: Offset(0, searchBarTopOffset),
+              child: AnimatedOpacity(
+                opacity: searchBarOpacity,
+                duration: const Duration(milliseconds: 100),
+                child: IgnorePointer(
+                  ignoring: _isRouting || dragProgress > 0.0,
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        child: SafeArea(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(30),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.1),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: TextField(
+                                controller: _searchController,
+                                decoration: InputDecoration(
+                                  icon: const Icon(
+                                    Icons.search,
+                                    color: Colors.grey,
+                                  ),
+                                  hintText:
+                                      'Search for a building, lab, or office...',
+                                  border: InputBorder.none,
+                                  suffixIcon: _isSearchActive
+                                      ? IconButton(
+                                          icon: const Icon(
+                                            Icons.clear,
+                                            color: Colors.grey,
+                                          ),
+                                          onPressed: _clearSearch,
+                                        )
+                                      : null,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: MediaQuery.of(context).padding.top + 80.0,
+                        left: 16.0,
+                        right: 16.0,
+                        child: Visibility(
+                          visible: _isSearchActive && _searchResults.isNotEmpty,
+                          child: Material(
+                            elevation: 8,
+                            borderRadius: BorderRadius.circular(20),
+                            child: Container(
+                              constraints: BoxConstraints(
+                                maxHeight:
+                                    MediaQuery.of(context).size.height * 0.4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              // --- ✅ KEYBOARD LAG FIX ---
+                              // This Padding is cheap to rebuild. It sits
+                              // *inside* the Material/Container and wraps
+                              // the ListView.
+                              child: Padding(
+                                padding: EdgeInsets.only(
+                                  bottom: MediaQuery.of(
+                                    context,
+                                  ).viewInsets.bottom,
+                                ),
+                                child: ListView.builder(
+                                  shrinkWrap: true,
+                                  padding: EdgeInsets.zero, // Keep this zero
+                                  itemCount: _searchResults.length,
+                                  itemBuilder: (context, index) {
+                                    final location = _searchResults[index];
+                                    return ListTile(
+                                      title: Text(location.name),
+                                      subtitle: Text(location.category),
+                                      leading: const Icon(
+                                        Icons.location_on_outlined,
+                                        color: Colors.blue,
+                                      ),
+                                      onTap: () =>
+                                          _onSearchResultTapped(location),
+                                    );
+                                  },
+                                ),
+                              ),
+                              // --- END FIX ---
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            // --- GPS Button ---
+            Positioned(
+              right: 16.0,
+              bottom: (screenHeight * sheetPosition) + 20.0,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 300),
+                opacity: gpsButtonOpacity,
+                child: IgnorePointer(
+                  ignoring: gpsButtonOpacity == 0.0,
+                  child: FloatingActionButton(
+                    heroTag: 'gps_btn',
+                    onPressed: _centerMapOnUser,
+                    backgroundColor: _isFollowingUser
+                        ? Colors.white
+                        : Colors.blue[600],
+                    foregroundColor: _isFollowingUser
+                        ? Colors.blue[600]
+                        : Colors.white,
+                    child: Icon(
+                      _isFollowingUser ? Icons.navigation : Icons.gps_fixed,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // --- ☀️ WEATHER INTEGRATION ☀️ ---
+  // This widget builds the weather display
+  Widget _buildWeatherWidget() {
+    if (_isWeatherLoading) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        width: 100, // Give it a fixed width while loading
+        child: const Center(
+          child: SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.grey[200],
+        borderRadius: BorderRadius.circular(15),
+      ),
+      child: Row(
+        children: [
+          Text(
+            _currentTemperature, // LIVE DATA
+            style: TextStyle(
+              color: Colors.grey[900],
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(width: 2),
+          Icon(
+            _weatherIcon, // LIVE DATA
+            size: 16,
+            color: Colors.grey[800],
+          ),
+          const SizedBox(width: 4),
+          Text(
+            _aqiString, // LIVE DATA
+            style: TextStyle(
+              fontSize: 12,
+              color: _aqiColor, // LIVE DATA
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  // --- END WEATHER INTEGRATION ---
+
+  // --- ☀️ THIS IS THE NEW WEATHER DETAIL SHEET ☀️ ---
+  void _showWeatherDetailsSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext sheetContext) {
+        // Use a DraggableScrollableSheet for a sheet that can be scrolled
+        return DraggableScrollableSheet(
+          initialChildSize: 0.4, // Start at 40% height
+          minChildSize: 0.3,
+          maxChildSize: 0.6, // Can be dragged up to 60%
+          expand: false,
+          builder: (context, scrollController) {
+            return Container(
+              padding: const EdgeInsets.all(16.0),
+              child: ListView(
+                controller: scrollController, // Make the content scrollable
+                children: [
+                  // --- Handle ---
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // --- Main Weather Info ---
+                  Center(
+                    child: Column(
+                      children: [
+                        const Text(
+                          'Vellore', // As shown in your screenshot
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          _currentTemperature,
+                          style: const TextStyle(
+                            fontSize: 64,
+                            fontWeight: FontWeight.w200,
+                          ),
+                        ),
+                        Text(
+                          _weatherDescription,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              _weatherHigh,
+                              style: const TextStyle(fontSize: 16),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              _weatherLow,
+                              style: const TextStyle(fontSize: 16),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          _weatherFeelsLike,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            color: Colors.grey,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 32),
+
+                  // --- Hourly Forecast ---
+                  SizedBox(
+                    height: 100, // Fixed height for the horizontal list
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _hourlyTimes.length,
+                      itemBuilder: (context, index) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                _hourlyTimes[index],
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Icon(
+                                _hourlyIcons[index],
+                                color: Colors.blue[700],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                _hourlyTemps[index],
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const Divider(height: 32),
+
+                  // --- Air Quality ---
+                  ListTile(
+                    leading: Icon(Icons.air, color: _aqiColor),
+                    title: const Text(
+                      'Air Quality',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Text(_aqiString.replaceFirst('● ', '')),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+  // --- END NEW FUNCTION ---
+
+  // --- 👇 SPEEDOMETER WIDGETS ---
+  // This is your new Speedometer
+  Widget _buildSpeedometerWidget({Key? key}) {
+    return Card(
+      key: key,
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+      color: Colors.white,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.speed, color: Colors.blue[700], size: 20),
+            const SizedBox(width: 8),
+            Text(
+              _currentSpeed,
+              key: ValueKey(_currentSpeed), // For the animation
+              style: TextStyle(
+                color: Colors.blue[900],
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // This is your Re-centre button
+  Widget _buildReCentreButton({Key? key}) {
+    return Card(
+      key: key,
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+      color: Colors.blueAccent,
+      child: InkWell(
+        onTap: _centerMapOnUser,
+        borderRadius: BorderRadius.circular(30),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.navigation_outlined, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'Re-centre',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  // --- END SPEEDOMETER WIDGETS ---
+
   @override
   Widget build(BuildContext context) {
-    final mediaQuery = MediaQuery.of(context);
-    final screenHeight = mediaQuery.size.height;
-    final bottomPadding = mediaQuery.padding.bottom;
-    final double searchBarHeight = mediaQuery.padding.top + 80.0;
-    const double sheetStartMove = 0.2;
-    const double sheetEndMove = 0.4;
-    double dragProgress =
-        (_sheetPosition - sheetStartMove) / (sheetEndMove - sheetStartMove);
-    dragProgress = dragProgress.clamp(0.0, 1.0);
-    final double searchBarTopOffset = -searchBarHeight * dragProgress;
-    final double searchBarOpacity = _isRouting ? 0.0 : (1.0 - dragProgress);
-    final bool isSheetLow = _sheetPosition < 0.25;
-    final double gpsButtonOpacity = (_isRouting || !isSheetLow) ? 0.0 : 1.0;
-    final double navCardHeight = 200.0 + bottomPadding;
-    final double recentreButtonBottomOffset = navCardHeight + 16.0;
-
-    // --- *** REFACTORED: Use latlong.LatLng directly *** ---
     final campusCenter = LatLng(12.970856, 79.159515);
 
     final List<Marker> locationMarkers = [];
     if (_finalDestinationCoordinates != null && !_isRouting) {
-      // --- *** REFACTORED: Use latlong.LatLng directly *** ---
       locationMarkers.add(
         Marker(
           point: _finalDestinationCoordinates!,
@@ -1889,7 +2707,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
     final List<Polyline> routePolylines = [];
     if (_remainingRouteCoordinates.isNotEmpty) {
-      // --- *** REFACTORED: Use latlong.LatLng directly *** ---
       routePolylines.add(
         Polyline(
           points: _remainingRouteCoordinates,
@@ -1898,6 +2715,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ),
       );
     }
+
+    final mediaQuery = MediaQuery.of(context);
+    final bottomPadding = mediaQuery.padding.bottom;
+    final double navCardHeight = 200.0 + bottomPadding;
+    final double recentreButtonBottomOffset = navCardHeight + 16.0;
 
     return Scaffold(
       resizeToAvoidBottomInset: false,
@@ -1911,12 +2733,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 initialCenter: campusCenter,
                 initialZoom: 16.0,
                 minZoom: 10.0,
-                maxZoom: 19.0, // Set back to 19
+                maxZoom: 19.0,
                 interactionOptions: const InteractionOptions(
                   flags: InteractiveFlag.all,
                   enableMultiFingerGestureRace: true,
                 ),
-                // --- *** REFACTORED: Use latlong.LatLng directly *** ---
                 onLongPress: (tapPosition, point) =>
                     _onMapLongPress(tapPosition, point),
                 onPointerDown: (details, point) {
@@ -1926,15 +2747,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 },
               ),
               children: [
+                // Inside _HomeScreenState.build() -> children: [ FlutterMap(...) ]
                 TileLayer(
-                  // --- *** NIGHT MODE REMOVED *** ---
+                  // NEW: Stadia Maps Alidade Smooth Style (The best looking, detailed free style)
+                  // 🚨 REPLACE 'YOUR_STADIA_API_KEY' with the key you just obtained 🚨
                   urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+
+                  // StadiaMaps uses subdomains for load balancing
+                  subdomains: const ['a', 'b', 'c', 'd'],
+
+                  // These lines are required for the 403 fix in the CustomTileProvider
                   userAgentPackageName: 'com.example.vit_navigation_app',
-                  maxZoom: 19.0,
-                  // --- *** PERFORMANCE FIX: Use _tileProvider variable *** ---
+                  maxZoom: 20,
+                  maxNativeZoom: 18,
                   tileProvider: _tileProvider,
                   retinaMode: true,
                 ),
+                // Note: You must also remove the unused maxNativeZoom line if Flutter throws an error for it
                 if (_isLocationServiceEnabled)
                   CurrentLocationLayer(
                     followOnLocationUpdate: _isFollowingUser
@@ -1943,8 +2772,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     turnOnHeadingUpdate: _isFollowingUser
                         ? TurnOnHeadingUpdate.always
                         : TurnOnHeadingUpdate.never,
-                    turnAnimationCurve: Curves.easeOut,
-                    turnAnimationDuration: const Duration(milliseconds: 400),
+
+                    // --- 👇 THIS IS THE FIX 👇 ---
+
+                    // Change the curve from easeOut to linear for a more direct feel
+                    turnAnimationCurve: Curves.linear,
+
+                    // Reduce the duration significantly (e.g., to 100ms or even 0)
+                    turnAnimationDuration: const Duration(milliseconds: 50),
+
                     style: LocationMarkerStyle(
                       marker: DefaultLocationMarker(
                         color: Colors.blue.shade700,
@@ -1967,179 +2803,34 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ],
             ),
           ),
-          Transform.translate(
-            offset: Offset(0, searchBarTopOffset),
-            child: AnimatedOpacity(
-              opacity: searchBarOpacity,
-              duration: const Duration(milliseconds: 100),
-              child: IgnorePointer(
-                ignoring: _isRouting || dragProgress > 0.0,
-                child: Stack(
-                  children: [
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      child: SafeArea(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16.0),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(30),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.1),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: TextField(
-                              controller: _searchController,
-                              decoration: InputDecoration(
-                                icon: const Icon(
-                                  Icons.search,
-                                  color: Colors.grey,
-                                ),
-                                hintText:
-                                    'Search for a building, lab, or office...',
-                                border: InputBorder.none,
-                                suffixIcon: _isSearchActive
-                                    ? IconButton(
-                                        icon: const Icon(
-                                          Icons.clear,
-                                          color: Colors.grey,
-                                        ),
-                                        onPressed: _clearSearch,
-                                      )
-                                    : null,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      top: MediaQuery.of(context).padding.top + 80.0,
-                      left: 16.0,
-                      right: 16.0,
-                      child: Visibility(
-                        visible: _isSearchActive && _searchResults.isNotEmpty,
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                            bottom: MediaQuery.of(context).viewInsets.bottom,
-                          ),
-                          child: Material(
-                            elevation: 8,
-                            borderRadius: BorderRadius.circular(20),
-                            child: Container(
-                              constraints: BoxConstraints(
-                                maxHeight:
-                                    MediaQuery.of(context).size.height * 0.4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: ListView.builder(
-                                shrinkWrap: true,
-                                padding: EdgeInsets.zero,
-                                itemCount: _searchResults.length,
-                                itemBuilder: (context, index) {
-                                  final location = _searchResults[index];
-                                  return ListTile(
-                                    title: Text(location.name),
-                                    subtitle: Text(location.category),
-                                    leading: const Icon(
-                                      Icons.location_on_outlined,
-                                      color: Colors.blue,
-                                    ),
-                                    onTap: () =>
-                                        _onSearchResultTapped(location),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
 
-          // --- *** NIGHT MODE REMOVED *** ---
-          if (_isRouting && !_isFollowingUser)
+          // --- OPTIMIZATION 2: This new widget handles all drag animations ---
+          _buildAnimatedUI(_sheetController),
+
+          // --- 👇 SPEEDOMETER / RE-CENTRE BUTTON LOGIC ---
+          if (_isRouting)
             Positioned(
               bottom: recentreButtonBottomOffset + 10,
               right: 16.0,
-              child: Card(
-                elevation: 4,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(30),
-                ),
-                color: Colors.blueAccent,
-                child: InkWell(
-                  onTap: _centerMapOnUser,
-                  borderRadius: BorderRadius.circular(30),
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: 16.0,
-                      vertical: 16.0,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.navigation_outlined,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                        SizedBox(width: 8),
-                        Text(
-                          'Re-centre',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                transitionBuilder: (child, animation) {
+                  return ScaleTransition(
+                    scale: animation,
+                    alignment: Alignment.centerRight,
+                    child: child,
+                  );
+                },
+                child: _isFollowingUser
+                    // We give each child a key so the
+                    // AnimatedSwitcher knows they are different.
+                    ? _buildSpeedometerWidget(key: const ValueKey('speed'))
+                    : _buildReCentreButton(key: const ValueKey('re-centre')),
               ),
             ),
-          Positioned(
-            right: 16.0,
-            bottom: (screenHeight * _sheetPosition) + 20.0,
-            child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 300),
-              opacity: gpsButtonOpacity,
-              child: IgnorePointer(
-                ignoring: gpsButtonOpacity == 0.0,
-                child: FloatingActionButton(
-                  heroTag: 'gps_btn',
-                  onPressed: _centerMapOnUser,
-                  backgroundColor: _isFollowingUser
-                      ? Colors.white
-                      : Colors.blue[600],
-                  foregroundColor: _isFollowingUser
-                      ? Colors.blue[600]
-                      : Colors.white,
-                  child: Icon(
-                    _isFollowingUser ? Icons.navigation : Icons.gps_fixed,
-                  ),
-                ),
-              ),
-            ),
-          ),
+          // --- END SPEEDOMETER LOGIC ---
+
+          // --- Bottom Sheet ---
           AnimatedSlide(
             offset: _isRouting ? const Offset(0, 1) : const Offset(0, 0),
             duration: const Duration(milliseconds: 400),
@@ -2150,141 +2841,97 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               minChildSize: 0.2,
               maxChildSize: 0.95,
               expand: true,
-              builder:
-                  (BuildContext context, ScrollController scrollController) {
-                    return IgnorePointer(
-                      ignoring: _isRouting,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).scaffoldBackgroundColor,
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(20),
-                            topRight: Radius.circular(20),
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
-                              blurRadius: 10,
-                              offset: const Offset(0, -5),
-                            ),
-                          ],
+              builder: (BuildContext context, ScrollController scrollController) {
+                return IgnorePointer(
+                  ignoring: _isRouting,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).scaffoldBackgroundColor,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(20),
+                        topRight: Radius.circular(20),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 10,
+                          offset: const Offset(0, -5),
                         ),
-                        child: Column(
-                          children: [
-                            Expanded(
-                              child: SingleChildScrollView(
-                                controller: scrollController,
-                                child: Column(
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        // This is the grab-handle, title, and weather
+                        Padding(
+                          padding: const EdgeInsets.only(
+                            top: 10.0,
+                            bottom: 8.0,
+                          ),
+                          child: Column(
+                            children: [
+                              Center(
+                                child: Container(
+                                  width: 40,
+                                  height: 5,
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[300],
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16.0,
+                                ),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
                                   children: [
-                                    Padding(
-                                      padding: const EdgeInsets.only(
-                                        top: 10.0,
-                                        bottom: 8.0,
-                                      ),
-                                      child: Column(
-                                        children: [
-                                          Center(
-                                            child: Container(
-                                              width: 40,
-                                              height: 5,
-                                              decoration: BoxDecoration(
-                                                color: Colors.grey[300],
-                                                borderRadius:
-                                                    BorderRadius.circular(10),
-                                              ),
-                                            ),
+                                    Text(
+                                      _selectedIndex == 0
+                                          ? 'Latest in the area'
+                                          : _getTabTitle(_selectedIndex),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .headlineSmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.bold,
                                           ),
-                                          const SizedBox(height: 8),
-                                          Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 16.0,
-                                            ),
-                                            child: Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment
-                                                      .spaceBetween,
-                                              children: [
-                                                Text(
-                                                  _selectedIndex == 0
-                                                      ? 'Latest in the area'
-                                                      : _getTabTitle(
-                                                          _selectedIndex,
-                                                        ),
-                                                  style: Theme.of(context)
-                                                      .textTheme
-                                                      .headlineSmall
-                                                      ?.copyWith(
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                      ),
-                                                ),
-                                                Container(
-                                                  padding:
-                                                      const EdgeInsets.symmetric(
-                                                        horizontal: 8,
-                                                        vertical: 4,
-                                                      ),
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.grey[200],
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          15,
-                                                        ),
-                                                  ),
-                                                  child: Row(
-                                                    children: [
-                                                      Text(
-                                                        '24°',
-                                                        style: TextStyle(
-                                                          color:
-                                                              Colors.grey[700],
-                                                          fontWeight:
-                                                              FontWeight.bold,
-                                                        ),
-                                                      ),
-                                                      const Icon(
-                                                        Icons.cloud,
-                                                        size: 16,
-                                                        color: Colors.grey,
-                                                      ),
-                                                      const SizedBox(width: 4),
-                                                      const Text(
-                                                        '● NAQI',
-                                                        style: TextStyle(
-                                                          fontSize: 12,
-                                                          color: Colors.green,
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
                                     ),
-                                    const Divider(height: 1),
-                                    Container(
-                                      padding: const EdgeInsets.only(
-                                        top: 16.0,
-                                        bottom: 0.0,
-                                      ),
-                                      child: _buildCurrentContent(
-                                        _selectedIndex,
-                                      ),
+
+                                    // --- ☀️ WEATHER INTEGRATION (NOW CLICKABLE) ☀️ ---
+                                    InkWell(
+                                      onTap: _showWeatherDetailsSheet,
+                                      borderRadius: BorderRadius.circular(15),
+                                      child: _buildWeatherWidget(),
                                     ),
+                                    // --- END WEATHER INTEGRATION ---
                                   ],
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    );
-                  },
+                        const Divider(height: 1),
+
+                        // --- PERFORMANCE FIX: Replaced wrapper ---
+                        Expanded(
+                          child: _buildCurrentContent(
+                            _selectedIndex,
+                            scrollController, // Pass the controller
+                          ),
+                        ),
+                        // --- END FIX ---
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
           ),
+
+          // --- Bottom Navigation Bar ---
           Positioned(
             bottom: 0,
             left: 0,
@@ -2334,6 +2981,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             ),
           ),
+
+          // --- Navigation Turn-by-Turn Card ---
           Positioned(
             bottom: 0,
             left: 0,
@@ -2555,102 +3204,85 @@ class CustomNavigationBarItem {
   });
 }
 
+// --- PERFORMANCE FIX: Replace old DirectoryScreen with this ---
 class DirectoryScreen extends StatelessWidget {
-  final List<Location> allLocations;
+  final List<DirectoryListItem> processedDirectoryItems;
   final Function(Location) onLocationSelected;
+  final ScrollController scrollController;
+
   const DirectoryScreen({
     super.key,
-    required this.allLocations,
+    required this.processedDirectoryItems,
     required this.onLocationSelected,
+    required this.scrollController,
   });
+
   @override
   Widget build(BuildContext context) {
-    final groupedLocations = <String, List<Location>>{};
-    for (var loc in allLocations) {
-      if (!groupedLocations.containsKey(loc.category))
-        groupedLocations[loc.category] = [];
-      groupedLocations[loc.category]!.add(loc);
-    }
+    return Column(
+      children: [
+        // --- Search Bar (REMOVED) ---
+        // I've deleted the Padding widget that contained
+        // the search bar TextField.
 
-    final sortedKeys = groupedLocations.keys.toList()
-      ..sort((a, b) {
-        if (a.contains('Hostel') && !b.contains('Hostel')) return -1;
-        if (!a.contains('Hostel') && b.contains('Hostel')) return 1;
-        if (a.contains('Academic') && !b.contains('Academic')) return -1;
-        if (!a.contains('Academic') && b.contains('Academic')) return 1;
-        return a.compareTo(b);
-      });
+        // --- Lazy-Loading List ---
+        Expanded(
+          child: ListView.builder(
+            controller: scrollController,
+            // Adjusted padding to start from the top
+            padding: const EdgeInsets.all(16.0),
+            itemCount: processedDirectoryItems.length,
+            itemBuilder: (context, index) {
+              final item = processedDirectoryItems[index];
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            decoration: BoxDecoration(
-              color: const Color(0xFFE5E7EB),
-              borderRadius: BorderRadius.circular(30),
-            ),
-            child: const TextField(
-              decoration: InputDecoration(
-                icon: Icon(Icons.search, color: Colors.grey),
-                hintText: 'Search within Directory...',
-                border: InputBorder.none,
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          ...sortedKeys.map((key) {
-            final entry = groupedLocations[key]!;
-            entry.sort((a, b) => a.name.compareTo(b.name));
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    key,
+              if (item is CategoryHeaderItem) {
+                // --- Build Category Header ---
+                return Padding(
+                  padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
+                  child: Text(
+                    item.categoryName,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.bold,
                       color: Colors.blue[800],
                     ),
                   ),
-                  const Divider(),
-                  ...entry.map((location) {
-                    return Card(
-                      margin: const EdgeInsets.symmetric(vertical: 8),
-                      elevation: 1,
-                      child: ListTile(
-                        leading: const Icon(
-                          Icons.location_city,
-                          color: Colors.blue,
-                        ),
-                        title: Text(
-                          location.name,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        subtitle: Text(
-                          location.description,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                        onTap: () {
-                          onLocationSelected(location);
-                        },
-                      ),
-                    );
-                  }),
-                ],
-              ),
-            );
-          }),
-        ],
-      ),
+                );
+              } else if (item is LocationItem) {
+                // --- Build Location Card ---
+                final location = item.location;
+                return Card(
+                  margin: const EdgeInsets.symmetric(vertical: 4),
+                  elevation: 1,
+                  child: ListTile(
+                    leading: const Icon(
+                      Icons.location_city,
+                      color: Colors.blue,
+                    ),
+                    title: Text(
+                      location.name,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      location.description,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: () {
+                      onLocationSelected(location);
+                    },
+                  ),
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      ],
     );
   }
 }
+// --- END REPLACEMENT ---
 
 class _TransportationOption extends StatelessWidget {
   final IconData icon;
@@ -2714,11 +3346,21 @@ class _TransportationOption extends StatelessWidget {
   }
 }
 
-// Corrected CachedTileProvider constructor
+// Corrected CachedTileProvider class with Universal Headers
 class CachedTileProvider extends TileProvider {
   CachedTileProvider();
+
+  // The User-Agent header is vital for *all* free public tile servers
+  static const Map<String, String> _customHeaders = {
+    'User-Agent': 'VIT-Navigation-App (Student Welfare)',
+  };
+
   @override
   ImageProvider getImage(TileCoordinates coordinates, TileLayer options) {
-    return CachedNetworkImageProvider(getTileUrl(coordinates, options));
+    return CachedNetworkImageProvider(
+      getTileUrl(coordinates, options),
+      // Pass the custom headers to prevent 403 errors
+      headers: _customHeaders,
+    );
   }
 }
