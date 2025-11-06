@@ -1,5 +1,5 @@
 # Use the official OSRM image as the base
-FROM osrm/osrm-backend:v6.0.0
+FROM ghcr.io/project-osrm/osrm-backend:v6.0.0
 
 # Copy your processed map data from the repo into the Docker image
 # This assumes your data is in a folder named 'osrm-data'
